@@ -3,8 +3,10 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi import File
 from fastapi import HTTPException
+from fastapi import Query
 from fastapi import UploadFile
 
+from app.services.chunking import chunk_text
 from app.services.ingest import extract_text
 
 router = APIRouter(prefix="/api")
@@ -13,7 +15,11 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.post("/ingest")
-async def ingest_document(file: UploadFile = File(...)) -> dict[str, str | int]:
+async def ingest_document(
+	file: UploadFile = File(...),
+	chunk_size: int = Query(default=500, ge=1),
+	overlap: int = Query(default=50, ge=0),
+) -> dict[str, object]:
 	file_bytes = await file.read()
 
 	if not file_bytes:
@@ -25,6 +31,7 @@ async def ingest_document(file: UploadFile = File(...)) -> dict[str, str | int]:
 
 	try:
 		text = extract_text(file_name=file_name, file_bytes=file_bytes)
+		chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
@@ -33,5 +40,9 @@ async def ingest_document(file: UploadFile = File(...)) -> dict[str, str | int]:
 	return {
 		"filename": file_name,
 		"characters": len(text),
+		"chunk_size": chunk_size,
+		"overlap": overlap,
+		"chunk_count": len(chunks),
+		"chunks": chunks,
 		"text": text,
 	}

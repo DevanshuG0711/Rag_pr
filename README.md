@@ -34,7 +34,20 @@ Minimal FastAPI scaffold for a naive document RAG pipeline.
 ## Current Status
 - [x] FastAPI setup
 - [x] Document ingestion (PDF/TXT)
-- [ ] Chunking
+- [x] Chunking
 - [ ] Embeddings
 - [ ] Vector search
 - [ ] RAG pipeline
+
+## Test Chunking
+
+Use the ingestion endpoint with chunking query params:
+
+curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=100&overlap=20" \
+   -F "file=@/path/to/file.txt"
+
+Response fields include:
+- chunk_size
+- overlap
+- chunk_count
+- chunks
