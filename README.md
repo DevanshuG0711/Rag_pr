@@ -29,3 +29,12 @@ Minimal FastAPI scaffold for a naive document RAG pipeline.
 - If you see "Address already in use", port 8000 is occupied.
    - Either stop the existing process, or run on another port:
       uvicorn app.main:app --reload --port 8001
+
+
+## Current Status
+- [x] FastAPI setup
+- [x] Document ingestion (PDF/TXT)
+- [ ] Chunking
+- [ ] Embeddings
+- [ ] Vector search
+- [ ] RAG pipeline
