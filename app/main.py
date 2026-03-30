@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 
+from app.api.routes import router as api_router
+
 app = FastAPI(title="Phase 0 RAG API")
+app.include_router(api_router)
 
 
 @app.get("/")
