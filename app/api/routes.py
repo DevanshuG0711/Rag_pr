@@ -11,6 +11,9 @@ from app.services.embeddings import DEFAULT_EMBEDDING_MODEL
 from app.services.embeddings import embedding_dimension
 from app.services.embeddings import generate_embeddings
 from app.services.ingest import extract_text
+from app.services.vector_store import COLLECTION_NAME
+from app.services.vector_store import search_similar_chunks
+from app.services.vector_store import store_chunk_embeddings
 
 router = APIRouter(prefix="/api")
 UPLOAD_DIR = Path("data/uploads")
@@ -43,6 +46,15 @@ async def ingest_document(
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail="Failed to generate embeddings") from exc
 
+	try:
+		point_ids = store_chunk_embeddings(
+			file_name=file_name,
+			chunks=chunks,
+			embeddings=embeddings,
+		)
+	except Exception as exc:
+		raise HTTPException(status_code=500, detail="Failed to store vectors") from exc
+
 	return {
 		"filename": file_name,
 		"characters": len(text),
@@ -54,5 +66,29 @@ async def ingest_document(
 		"embedding_dimension": embedding_dimension(),
 		"embedding_count": len(embeddings),
 		"embeddings": embeddings,
+		"collection": COLLECTION_NAME,
+		"stored_count": len(point_ids),
+		"point_ids": point_ids,
 		"text": text,
+	}
+
+
+@router.get("/search")
+def search_chunks(query: str, top_k: int = Query(default=5, ge=1)) -> dict[str, object]:
+	if not query.strip():
+		raise HTTPException(status_code=400, detail="query must not be empty")
+
+	try:
+		query_embedding = generate_embeddings(chunks=[query])[0]
+		results = search_similar_chunks(query_embedding=query_embedding, top_k=top_k)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	except Exception as exc:
+		raise HTTPException(status_code=500, detail="Failed to search vectors") from exc
+
+	return {
+		"query": query,
+		"top_k": top_k,
+		"collection": COLLECTION_NAME,
+		"results": results,
 	}

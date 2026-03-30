@@ -1,0 +1,119 @@
+import os
+from pathlib import Path
+from uuid import uuid4
+
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance
+from qdrant_client.models import PointStruct
+from qdrant_client.models import VectorParams
+
+COLLECTION_NAME = "documents"
+QDRANT_LOCAL_PATH = Path("data/qdrant")
+
+_client: QdrantClient | None = None
+
+
+def get_qdrant_client() -> QdrantClient:
+	global _client
+
+	if _client is not None:
+		return _client
+
+	mode = os.getenv("QDRANT_MODE", "local").lower()
+
+	if mode == "memory":
+		_client = QdrantClient(":memory:")
+	elif mode == "docker":
+		url = os.getenv("QDRANT_URL", "http://localhost:6333")
+		_client = QdrantClient(url=url)
+	else:
+		QDRANT_LOCAL_PATH.mkdir(parents=True, exist_ok=True)
+		_client = QdrantClient(path=str(QDRANT_LOCAL_PATH))
+
+	return _client
+
+
+def ensure_collection(vector_size: int, collection_name: str = COLLECTION_NAME) -> None:
+	client = get_qdrant_client()
+
+	if client.collection_exists(collection_name=collection_name):
+		return
+
+	client.create_collection(
+		collection_name=collection_name,
+		vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+	)
+
+
+def store_chunk_embeddings(
+	file_name: str,
+	chunks: list[str],
+	embeddings: list[list[float]],
+	collection_name: str = COLLECTION_NAME,
+) -> list[str]:
+	if len(chunks) != len(embeddings):
+		raise ValueError("chunks and embeddings must have the same length")
+	if not embeddings:
+		return []
+
+	vector_size = len(embeddings[0])
+	ensure_collection(vector_size=vector_size, collection_name=collection_name)
+
+	points: list[PointStruct] = []
+	point_ids: list[str] = []
+
+	for chunk_index, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+		point_id = str(uuid4())
+		point_ids.append(point_id)
+
+		points.append(
+			PointStruct(
+				id=point_id,
+				vector=embedding,
+				payload={
+					"file_name": file_name,
+					"chunk_index": chunk_index,
+					"chunk_text": chunk,
+				},
+			)
+		)
+
+	client = get_qdrant_client()
+	client.upsert(collection_name=collection_name, points=points, wait=True)
+
+	return point_ids
+
+
+def search_similar_chunks(
+	query_embedding: list[float],
+	top_k: int = 5,
+	collection_name: str = COLLECTION_NAME,
+) -> list[dict[str, object]]:
+	if top_k <= 0:
+		raise ValueError("top_k must be greater than 0")
+
+	client = get_qdrant_client()
+	if not client.collection_exists(collection_name=collection_name):
+		raise ValueError("No vectors found yet. Ingest a document first.")
+
+	hits = client.search(
+		collection_name=collection_name,
+		query_vector=query_embedding,
+		limit=top_k,
+		with_payload=True,
+	)
+
+	results: list[dict[str, object]] = []
+	for hit in hits:
+		payload = hit.payload or {}
+		results.append(
+			{
+				"id": str(hit.id),
+				"score": float(hit.score),
+				"file_name": payload.get("file_name"),
+				"chunk_index": payload.get("chunk_index"),
+				"chunk_text": payload.get("chunk_text"),
+			}
+		)
+
+	return results

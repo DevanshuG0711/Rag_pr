@@ -36,7 +36,8 @@ Minimal FastAPI scaffold for a naive document RAG pipeline.
 - [x] Document ingestion (PDF/TXT)
 - [x] Chunking
 - [x] Embeddings
-- [ ] Vector search
+- [x] Vector storage (Qdrant)
+- [x] Basic vector search (top-k)
 - [ ] RAG pipeline
 
 ## Test Chunking
@@ -66,3 +67,41 @@ Response fields include:
 - embeddings
 
 Note: the first request may take longer because the sentence-transformers model is downloaded and loaded.
+
+## Qdrant Local Run Options
+
+Default mode is embedded local Qdrant (no Docker needed):
+- vectors are stored under `data/qdrant`
+- no extra process required
+
+Optional in-memory mode (for quick tests):
+
+export QDRANT_MODE=memory
+
+Optional Docker mode:
+
+docker run -p 6333:6333 -v $(pwd)/data/qdrant:/qdrant/storage qdrant/qdrant
+export QDRANT_MODE=docker
+export QDRANT_URL=http://127.0.0.1:6333
+
+## Test Vector Store And Search
+
+1. Ingest a file (stores chunks + embeddings in Qdrant):
+
+curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=120&overlap=20" \
+   -F "file=@/path/to/file.txt"
+
+Check response fields:
+- collection
+- stored_count
+- point_ids
+
+2. Run similarity search (top-k):
+
+curl "http://127.0.0.1:8000/api/search?query=your%20question&top_k=3"
+
+Search response includes:
+- score
+- file_name
+- chunk_index
+- chunk_text
