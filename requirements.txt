@@ -1,0 +1,7 @@
+fastapi==0.116.1
+uvicorn==0.35.0
+python-multipart==0.0.20
+pydantic==2.11.7
+sentence-transformers==5.1.0
+qdrant-client==1.15.1
+pypdf==5.9.0
