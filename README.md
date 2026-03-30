@@ -35,7 +35,7 @@ Minimal FastAPI scaffold for a naive document RAG pipeline.
 - [x] FastAPI setup
 - [x] Document ingestion (PDF/TXT)
 - [x] Chunking
-- [ ] Embeddings
+- [x] Embeddings
 - [ ] Vector search
 - [ ] RAG pipeline
 
@@ -51,3 +51,18 @@ Response fields include:
 - overlap
 - chunk_count
 - chunks
+
+## Test Embeddings
+
+Use the same endpoint. It now generates one embedding per chunk:
+
+curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=100&overlap=20" \
+   -F "file=@/path/to/file.txt"
+
+Response fields include:
+- embedding_model
+- embedding_dimension
+- embedding_count
+- embeddings
+
+Note: the first request may take longer because the sentence-transformers model is downloaded and loaded.

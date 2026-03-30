@@ -7,6 +7,9 @@ from fastapi import Query
 from fastapi import UploadFile
 
 from app.services.chunking import chunk_text
+from app.services.embeddings import DEFAULT_EMBEDDING_MODEL
+from app.services.embeddings import embedding_dimension
+from app.services.embeddings import generate_embeddings
 from app.services.ingest import extract_text
 
 router = APIRouter(prefix="/api")
@@ -34,8 +37,11 @@ async def ingest_document(
 		chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+	try:
+		embeddings = generate_embeddings(chunks=chunks)
 	except Exception as exc:
-		raise HTTPException(status_code=500, detail="Failed to parse document") from exc
+		raise HTTPException(status_code=500, detail="Failed to generate embeddings") from exc
 
 	return {
 		"filename": file_name,
@@ -44,5 +50,9 @@ async def ingest_document(
 		"overlap": overlap,
 		"chunk_count": len(chunks),
 		"chunks": chunks,
+		"embedding_model": DEFAULT_EMBEDDING_MODEL,
+		"embedding_dimension": embedding_dimension(),
+		"embedding_count": len(embeddings),
+		"embeddings": embeddings,
 		"text": text,
 	}
