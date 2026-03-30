@@ -38,7 +38,7 @@ Minimal FastAPI scaffold for a naive document RAG pipeline.
 - [x] Embeddings
 - [x] Vector storage (Qdrant)
 - [x] Basic vector search (top-k)
-- [ ] RAG pipeline
+- [x] RAG query pipeline
 
 ## Test Chunking
 
@@ -105,3 +105,27 @@ Search response includes:
 - file_name
 - chunk_index
 - chunk_text
+
+## Test Full RAG Query Pipeline
+
+1. (Optional) Enable OpenAI answer generation:
+
+export OPENAI_API_KEY=your_api_key
+export OPENAI_MODEL=gpt-4o-mini
+
+If OPENAI_API_KEY is not set, the API uses a local fallback answer generator.
+
+2. Ingest at least one file first:
+
+curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=120&overlap=20" \
+   -F "file=@/path/to/file.txt"
+
+3. Run full RAG query:
+
+curl -X POST "http://127.0.0.1:8000/api/query" \
+   -H "Content-Type: application/json" \
+   -d '{"query":"What does the document say about cloud services?","top_k":3}'
+
+Response includes:
+- answer
+- retrieved_chunks (id, score, file_name, chunk_index, chunk_text)

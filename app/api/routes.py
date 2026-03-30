@@ -11,6 +11,9 @@ from app.services.embeddings import DEFAULT_EMBEDDING_MODEL
 from app.services.embeddings import embedding_dimension
 from app.services.embeddings import generate_embeddings
 from app.services.ingest import extract_text
+from app.models.schemas import QueryRequest
+from app.models.schemas import QueryResponse
+from app.services.rag import run_rag_pipeline
 from app.services.vector_store import COLLECTION_NAME
 from app.services.vector_store import search_similar_chunks
 from app.services.vector_store import store_chunk_embeddings
@@ -92,3 +95,25 @@ def search_chunks(query: str, top_k: int = Query(default=5, ge=1)) -> dict[str, 
 		"collection": COLLECTION_NAME,
 		"results": results,
 	}
+
+
+@router.post("/query", response_model=QueryResponse)
+def query_rag(payload: QueryRequest) -> QueryResponse:
+	if not payload.query.strip():
+		raise HTTPException(status_code=400, detail="query must not be empty")
+
+	try:
+		answer, retrieved_chunks = run_rag_pipeline(
+			query=payload.query,
+			top_k=payload.top_k,
+		)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	except Exception as exc:
+		raise HTTPException(status_code=500, detail="Failed to run RAG query") from exc
+
+	return QueryResponse(
+		query=payload.query,
+		answer=answer,
+		retrieved_chunks=retrieved_chunks,
+	)

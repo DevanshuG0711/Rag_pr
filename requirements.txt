@@ -5,3 +5,4 @@ pydantic==2.11.7
 sentence-transformers==5.1.0
 qdrant-client==1.15.1
 pypdf==5.9.0
+openai==1.107.2
