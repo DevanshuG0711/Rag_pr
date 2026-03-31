@@ -1,15 +1,55 @@
+import math
 import re
+from collections import Counter
 
 from app.services.embeddings import generate_embeddings
 from app.services.vector_store import search_similar_chunks
 
 RRF_K = 60
+BM25_K1 = 1.5
+BM25_B = 0.75
 
 
-def keyword_score(query: str, text: str) -> int:
-    query_words = set(re.findall(r"\b\w+\b", query.lower()))
-    text_words = set(re.findall(r"\b\w+\b", text.lower()))
-    return len(query_words & text_words)
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"\b\w+\b", text.lower())
+
+
+def bm25_scores(query: str, documents: list[str]) -> list[float]:
+    if not documents:
+        return []
+
+    query_terms = list(set(_tokenize(query)))
+    tokenized_docs = [_tokenize(doc) for doc in documents]
+    doc_lengths = [len(tokens) for tokens in tokenized_docs]
+    avg_doc_len = sum(doc_lengths) / len(doc_lengths) if doc_lengths else 0.0
+
+    doc_freq: dict[str, int] = {}
+    for tokens in tokenized_docs:
+        for term in set(tokens):
+            doc_freq[term] = doc_freq.get(term, 0) + 1
+
+    doc_term_counts = [Counter(tokens) for tokens in tokenized_docs]
+    n_docs = len(documents)
+    scores: list[float] = []
+
+    for doc_index, term_counts in enumerate(doc_term_counts):
+        score = 0.0
+        doc_len = doc_lengths[doc_index]
+
+        for term in query_terms:
+            tf = term_counts.get(term, 0)
+            if tf == 0:
+                continue
+
+            df = doc_freq.get(term, 0)
+            idf = math.log(((n_docs - df + 0.5) / (df + 0.5)) + 1.0)
+
+            norm = BM25_K1 * (1 - BM25_B + BM25_B * (doc_len / avg_doc_len)) if avg_doc_len > 0 else BM25_K1
+            score += idf * (tf * (BM25_K1 + 1)) / (tf + norm)
+
+        scores.append(score)
+
+    return scores
 
 
 def _result_key(result: dict[str, object]) -> str:
@@ -45,11 +85,19 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
         reverse=True,
     )
 
-    keyword_ranked = sorted(
-        semantic_results,
-        key=lambda item: keyword_score(query, str(item.get("chunk_text") or "")),
-        reverse=True,
-    )
+    chunk_texts = [str(item.get("chunk_text") or "") for item in semantic_results]
+    keyword_scores = bm25_scores(query=query, documents=chunk_texts)
+
+    indexed_keyword_results = list(enumerate(semantic_results))
+
+    keyword_ranked = [
+        item
+        for _, item in sorted(
+            indexed_keyword_results,
+            key=lambda pair: keyword_scores[pair[0]],
+            reverse=True,
+        )
+    ]
 
     rrf_totals: dict[str, float] = {}
     representatives: dict[str, dict[str, object]] = {}
