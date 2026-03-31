@@ -267,27 +267,27 @@ This project evolves RAG into a Codebase Intelligence Engine that:
 
 ## 🏗️ Architecture
 
-Code Input
-↓
-AST Parsing (tree-sitter)
-↓
-Chunking (function/class level)
-↓
-Metadata + Call Graph Extraction
-↓
-Embeddings (sentence-transformers)
-↓
-Vector DB (Qdrant)
-↓
-Hybrid Retrieval (Semantic + BM25 + RRF)
-↓
-Context Builder
-↓
-Flow Reasoning Layer 🔥
-↓
-Answer Generator (Local / LLM)
-↓
-Final Output
+Code Input  
+↓  
+AST Parsing (tree-sitter)  
+↓  
+Chunking (function/class level)  
+↓  
+Metadata + Call Graph Extraction  
+↓  
+Embeddings (sentence-transformers)  
+↓  
+Vector DB (Qdrant)  
+↓  
+Hybrid Retrieval (Semantic + BM25 + RRF)  
+↓  
+Context Builder  
+↓  
+Flow Reasoning Layer  
+↓  
+Answer Generator (Local / LLM)  
+↓  
+Final Output  
 
 ---
 
