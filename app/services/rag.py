@@ -97,8 +97,8 @@ def _generate_local_answer(query: str, chunks: List[Dict[str, object]]) -> str:
 
     ranked = sorted(sentences, key=score, reverse=True)
 
-    best = [s for s in ranked if score(s) > 0][:2]
-
+    best = [s for s in ranked if score(s) > 0][:1]
+	
     if not best:
         best = sentences[:1]
 
