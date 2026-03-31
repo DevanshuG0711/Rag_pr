@@ -2,13 +2,11 @@ import os
 import re
 from typing import List, Dict
 
-from app.services.embeddings import generate_embeddings
-from app.services.vector_store import search_similar_chunks
+from app.services.hybrid_search import hybrid_search
 
 
 def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict[str, object]]:
-	query_embedding = generate_embeddings(chunks=[query])[0]
-	return search_similar_chunks(query_embedding=query_embedding, top_k=top_k)
+	return hybrid_search(query=query, top_k=top_k)
 
 
 def build_context(chunks: list[dict[str, object]]) -> str:
