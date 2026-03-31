@@ -1,12 +1,28 @@
 import os
 import re
+import logging
 from typing import List, Dict
 
 from app.services.hybrid_search import hybrid_search
+from app.services.query_classifier import classify_query
+
+
+logger = logging.getLogger(__name__)
 
 
 def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict[str, object]]:
-	return hybrid_search(query=query, top_k=top_k)
+	query_type = classify_query(query)
+
+	if query_type == "explain":
+		effective_top_k = 8
+	else:
+		effective_top_k = 5
+	
+	print("query_type:", query_type, "top_k:", effective_top_k)
+
+	logger.info("query_type=%s effective_top_k=%s", query_type, effective_top_k)
+
+	return hybrid_search(query=query, top_k=effective_top_k)
 
 
 def build_context(chunks: list[dict[str, object]]) -> str:
