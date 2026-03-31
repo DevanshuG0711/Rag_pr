@@ -32,4 +32,20 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
         rescored_results.append(updated)
 
     rescored_results.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
-    return rescored_results[:top_k]
+
+    unique_results: list[dict[str, object]] = []
+    seen_texts: set[str] = set()
+
+    for result in rescored_results:
+        result_text = str(result.get("chunk_text") or "").strip().lower()
+
+        if result_text in seen_texts:
+            continue
+
+        unique_results.append(result)
+        seen_texts.add(result_text)
+
+        if len(unique_results) >= top_k:
+            break
+
+    return unique_results
