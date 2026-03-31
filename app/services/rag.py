@@ -29,16 +29,30 @@ def build_context(chunks: list[dict[str, object]]) -> str:
 	if not chunks:
 		return ""
 
-	parts: list[str] = []
-	for idx, chunk in enumerate(chunks, start=1):
+	parts: list[str] = ["=== Context ===", ""]
+	for idx, chunk in enumerate(chunks[:5], start=1):
 		file_name = str(chunk.get("file_name") or "unknown")
-		chunk_index = chunk.get("chunk_index")
+		start_line = chunk.get("start_line")
+		end_line = chunk.get("end_line")
+		if start_line is not None and end_line is not None:
+			line_info = f"{start_line}-{end_line}"
+		else:
+			chunk_index = chunk.get("chunk_index")
+			line_info = f"chunk-{chunk_index}" if chunk_index is not None else "N/A"
 		chunk_text = str(chunk.get("chunk_text") or "")
-		parts.append(
-			f"[{idx}] file={file_name} chunk_index={chunk_index}\n{chunk_text}"
+
+		parts.extend(
+			[
+				f"[Chunk {idx}]",
+				f"File: {file_name}",
+				f"Lines: {line_info}",
+				"Code:",
+				chunk_text,
+				"",
+			]
 		)
 
-	return "\n\n".join(parts)
+	return "\n".join(parts).rstrip()
 
 
 def _generate_with_openai(query: str, context: str) -> str:
@@ -130,5 +144,6 @@ def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -
 def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, object]]]:
 	retrieved_chunks = retrieve_relevant_chunks(query=query, top_k=top_k)
 	context = build_context(retrieved_chunks)
+	print(context)
 	answer = generate_answer(query=query, context=context, chunks=retrieved_chunks)
 	return answer, retrieved_chunks
