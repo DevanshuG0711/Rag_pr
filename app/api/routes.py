@@ -6,12 +6,12 @@ from fastapi import HTTPException
 from fastapi import Query
 from fastapi import UploadFile
 
-from ast_chunking import extract_python_ast_chunks
 from app.services.chunking import chunk_text
 from app.services.embeddings import DEFAULT_EMBEDDING_MODEL
 from app.services.embeddings import embedding_dimension
 from app.services.embeddings import generate_embeddings
 from app.services.ingest import extract_text
+from app.services.ingest import extract_python_chunks_and_graph
 from app.models.schemas import QueryRequest
 from app.models.schemas import QueryResponse
 from app.services.rag import run_rag_pipeline
@@ -42,20 +42,13 @@ async def ingest_document(
 	try:
 		text = extract_text(file_name=file_name, file_bytes=file_bytes)
 		chunk_metadata: list[dict[str, object]] = []
+		call_graph: dict[str, list[str]] = {}
 
 		if file_name.lower().endswith(".py"):
-			ast_chunks = extract_python_ast_chunks(file_path=file_name, file_content=text)
-			chunks = [chunk["chunk_text"] for chunk in ast_chunks]
-			chunk_metadata = [
-				{
-					"name": chunk["name"],
-					"type": chunk["type"],
-					"file_name": chunk["file_name"],
-					"start_line": chunk["start_line"],
-					"end_line": chunk["end_line"],
-				}
-				for chunk in ast_chunks
-			]
+			chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+				code=text,
+				file_name=file_name,
+			)
 		else:
 			chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
 	except ValueError as exc:
@@ -83,6 +76,7 @@ async def ingest_document(
 		"chunk_count": len(chunks),
 		"chunks": chunks,
 		"chunk_metadata": chunk_metadata,
+		"call_graph": call_graph,
 		"embedding_model": DEFAULT_EMBEDDING_MODEL,
 		"embedding_dimension": embedding_dimension(),
 		"embedding_count": len(embeddings),

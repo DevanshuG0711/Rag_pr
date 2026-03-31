@@ -1,9 +1,14 @@
+# test_code.py
+
 def login():
-    print("login")
+    validate_user()
+    log_event()
 
-class Auth:
-    def logout(self):
-        print("logout")
+def validate_user():
+    db_check()
 
-def helper():
-    return "helper"
+def log_event():
+    print("log")
+
+def db_check():
+    print("db")
