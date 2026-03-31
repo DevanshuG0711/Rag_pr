@@ -227,7 +227,11 @@ curl -X POST "http://127.0.0.1:8000/api/query" \
 
 
 
-
+![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
+![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-red)
+![Status](https://img.shields.io/badge/Status-Active-success)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
 
 
@@ -264,6 +268,14 @@ This project evolves RAG into a Codebase Intelligence Engine that:
 - Performs flow-aware reasoning
 
 ---
+
+## 📁 Project Structure
+
+app/
+ ├── api/            # Routes
+ ├── services/       # Core logic (RAG, search, call graph)
+ ├── models/         # Schemas
+ ├── main.py         # Entry point
 
 ## 🏗️ Architecture
 
@@ -328,6 +340,12 @@ Docs: pypdf
 Optional LLM: OpenAI  
 
 ---
+
+## 🔌 API Endpoints
+
+- POST /api/ingest → Upload file and index
+- GET /api/search → Retrieve relevant chunks
+- POST /api/query → Full RAG pipeline (final answer)
 
 ## ⚡ How It Works (Deep Dive)
 

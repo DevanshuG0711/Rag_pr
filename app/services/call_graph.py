@@ -52,6 +52,8 @@ def extract_call_graph(code: str) -> dict[str, list[str]]:
                         # Keep only simple direct calls like foo(...)
                         if callee is not None and callee.type == "identifier":
                             called_name = _node_text(callee, source_bytes)
+                            if called_name in {"print"}:
+                                continue
                             if called_name not in seen_called:
                                 called.append(called_name)
                                 seen_called.add(called_name)
