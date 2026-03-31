@@ -269,13 +269,13 @@ This project evolves RAG into a Codebase Intelligence Engine that:
 
 ---
 
-## 📁 Project Structure
+<!-- ## 📁 Project Structure
 
 app/
  ├── api/            # Routes
  ├── services/       # Core logic (RAG, search, call graph)
  ├── models/         # Schemas
- ├── main.py         # Entry point
+ ├── main.py         # Entry point -->
 
 ## 🏗️ Architecture
 
