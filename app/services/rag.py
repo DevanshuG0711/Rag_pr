@@ -3,11 +3,13 @@ import re
 import logging
 from typing import List, Dict
 
+from app.services.call_graph import extract_call_graph
 from app.services.hybrid_search import hybrid_search
 from app.services.query_classifier import classify_query
 
 
 logger = logging.getLogger(__name__)
+FLOW_QUERY_TERMS = ("flow", "calls", "called by", "dependency")
 
 
 def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict[str, object]]:
@@ -53,6 +55,43 @@ def build_context(chunks: list[dict[str, object]]) -> str:
 		)
 
 	return "\n".join(parts).rstrip()
+
+
+def _is_flow_query(query: str) -> bool:
+	query_lower = query.lower()
+	return any(term in query_lower for term in FLOW_QUERY_TERMS)
+
+
+def _build_flow_context(chunks: list[dict[str, object]]) -> str:
+	merged_graph: dict[str, list[str]] = {}
+
+	for chunk in chunks[:5]:
+		chunk_text = str(chunk.get("chunk_text") or "")
+		if not chunk_text.strip():
+			continue
+
+		try:
+			chunk_graph = extract_call_graph(chunk_text)
+		except Exception:
+			continue
+
+		for func, called_funcs in chunk_graph.items():
+			existing = merged_graph.get(func, [])
+			for called in called_funcs:
+				if called not in existing:
+					existing.append(called)
+			merged_graph[func] = existing
+
+	lines: list[str] = ["Flow:"]
+	for func, called_funcs in merged_graph.items():
+		if not called_funcs:
+			continue
+		lines.append(f"{func} calls {', '.join(called_funcs)}")
+
+	if len(lines) == 1:
+		return ""
+
+	return "\n".join(lines)
 
 
 def _generate_with_openai(query: str, context: str) -> str:
@@ -142,6 +181,12 @@ def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -
 def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, object]]]:
 	retrieved_chunks = retrieve_relevant_chunks(query=query, top_k=top_k)
 	context = build_context(retrieved_chunks)
+
+	if _is_flow_query(query):
+		flow_context = _build_flow_context(retrieved_chunks)
+		if flow_context:
+			context = f"{context}\n\n{flow_context}" if context else flow_context
+
 	print(context)
 	answer = generate_answer(query=query, context=context, chunks=retrieved_chunks)
 	return answer, retrieved_chunks
