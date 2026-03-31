@@ -68,24 +68,19 @@ def _generate_with_openai(query: str, context: str) -> str:
 	model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 	client = OpenAI(api_key=api_key)
 
-	system_prompt = (
-		"You are a helpful assistant answering questions only from provided context. "
-		"If context is insufficient, say that clearly."
-	)
 	user_prompt = (
+		"You are a code assistant.\n"
+		"Use the provided context to answer the question.\n\n"
 		"Context:\n"
-		f"{context if context else 'No context found.'}\n\n"
+		f"{context}\n\n"
 		"Question:\n"
 		f"{query}\n\n"
-		"Answer briefly and accurately."
+		"Answer clearly and concisely."
 	)
 
 	response = client.responses.create(
 		model=model_name,
-		input=[
-			{"role": "system", "content": system_prompt},
-			{"role": "user", "content": user_prompt},
-		],
+		input=user_prompt,
 	)
 
 	return response.output_text.strip()
@@ -135,10 +130,13 @@ def _generate_local_answer(query: str, chunks: List[Dict[str, object]]) -> str:
 # The above function tries to extract the most relevant sentences from the top 3 chunks based on keyword overlap with the query. This is a simple heuristic that can provide a more informative answer than just taking the top chunk's text.
 
 def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -> str:
-	try:
-		return _generate_with_openai(query=query, context=context)
-	except Exception:
-		return _generate_local_answer(query=query, chunks=chunks)
+	if os.getenv("OPENAI_API_KEY"):
+		try:
+			return _generate_with_openai(query=query, context=context)
+		except Exception:
+			return _generate_local_answer(query=query, chunks=chunks)
+
+	return _generate_local_answer(query=query, chunks=chunks)
 
 
 def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, object]]]:
