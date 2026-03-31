@@ -16,3 +16,7 @@ data/uploads/
 
 # IDE
 .vscode/
+
+data/qdrant/
+.venv/
+__pycache__/
