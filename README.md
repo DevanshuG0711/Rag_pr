@@ -1,4 +1,4 @@
-# Phase 0 RAG
+# RAG Pipeline with Vector Embedding and LLM
 
 Minimal FastAPI scaffold for a naive document RAG pipeline.
 
