@@ -1,131 +1,225 @@
-# RAG Pipeline with Vector Embedding and LLM
+# Codebase Intelligence Engine
 
-Minimal FastAPI scaffold for a naive document RAG pipeline.
+A production-oriented FastAPI system that transforms source files into searchable structural knowledge using AST parsing, vector retrieval, hybrid ranking, and call graph reasoning.
 
-## Run
+## Problem Statement
 
-1. Create and activate virtual environment:
-   python3 -m venv .venv
-   source .venv/bin/activate
+Traditional RAG systems treat code as plain text. This loses important structure such as function boundaries, line ranges, and call relationships, which are critical for answering engineering questions like:
 
-2. Install dependencies:
-   pip install -r requirements.txt
+- Which functions are involved in a flow?
+- Where is a behavior implemented?
+- What does a function depend on?
 
-3. Start server:
-   uvicorn app.main:app --reload
+## Solution Overview
 
-   Alternative (also works):
-   uvicorn main:app --reload
+This project upgrades basic RAG into a Codebase Intelligence Engine by combining:
 
-4. Health check:
-   GET http://127.0.0.1:8000/health
+- AST-based chunking for Python files using tree-sitter
+- Rich metadata extraction per chunk (function/class name, file, line range)
+- Call graph extraction for function relationships
+- Embeddings + Qdrant vector storage for semantic retrieval
+- Hybrid search with Semantic + BM25 + RRF fusion
+- Context building optimized for code understanding
+- Flow-aware reasoning for dependency and call-path style queries
+- Local answer generation by default, with optional LLM support
 
-5. Root check:
-   GET http://127.0.0.1:8000/
+## Architecture
 
-## Troubleshooting
+Step-by-step pipeline:
 
-- Use `uvicorn`, not `unicorn`.
-- If you see "Address already in use", port 8000 is occupied.
-   - Either stop the existing process, or run on another port:
-      uvicorn app.main:app --reload --port 8001
+1. File Ingestion
+- Upload TXT, PDF, or PY files through the ingest API.
 
+2. Parsing and Chunking
+- Python files are parsed with tree-sitter and split by function/class nodes.
+- Non-code files use configurable text chunking with overlap.
 
-## Current Status
-- [x] FastAPI setup
-- [x] Document ingestion (PDF/TXT)
-- [x] Chunking
-- [x] Embeddings
-- [x] Vector storage (Qdrant)
-- [x] Basic vector search (top-k)
-- [x] RAG query pipeline
+3. Metadata and Call Graph Extraction
+- For AST chunks, capture symbol name, type, file name, and line boundaries.
+- Extract function-to-function call relationships.
 
-## Test Chunking
+4. Embedding Generation
+- Generate vector embeddings for each chunk using sentence-transformers.
 
-Use the ingestion endpoint with chunking query params:
+5. Vector Persistence
+- Store vectors and payload metadata in Qdrant.
 
-curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=100&overlap=20" \
-   -F "file=@/path/to/file.txt"
+6. Hybrid Retrieval
+- Run semantic retrieval from Qdrant.
+- Run BM25 keyword ranking on candidate chunk text.
+- Fuse both rankings using Reciprocal Rank Fusion (RRF).
 
-Response fields include:
-- chunk_size
-- overlap
-- chunk_count
-- chunks
+7. Context Builder
+- Build structured context with chunk numbering, file references, and code blocks.
 
-## Test Embeddings
+8. Flow Reasoning Layer
+- For flow/dependency queries, append derived call-flow relationships to context.
 
-Use the same endpoint. It now generates one embedding per chunk:
+9. Answer Generation
+- Prefer OpenAI generation when configured.
+- Automatically fall back to robust local answer generation when LLM is unavailable.
 
-curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=100&overlap=20" \
-   -F "file=@/path/to/file.txt"
+## Features
 
-Response fields include:
-- embedding_model
-- embedding_dimension
-- embedding_count
-- embeddings
+- AST chunking for Python functions and classes
+- Line-aware metadata extraction for precise grounding
+- Call graph extraction and flow explanation support
+- Embeddings with sentence-transformers
+- Qdrant local, memory, and Docker modes
+- Hybrid retrieval (Semantic + BM25 + RRF)
+- Query-type aware retrieval depth
+- Structured context formatting for better answer quality
+- Local-first generation with optional LLM upgrade path
 
-Note: the first request may take longer because the sentence-transformers model is downloaded and loaded.
+## Tech Stack
 
-## Qdrant Local Run Options
+- Backend: FastAPI, Uvicorn, Pydantic
+- Parsing: tree-sitter, tree-sitter-python
+- Embeddings: sentence-transformers (all-MiniLM-L6-v2)
+- Vector Database: Qdrant
+- Document Parsing: pypdf
+- Optional LLM: OpenAI API
 
-Default mode is embedded local Qdrant (no Docker needed):
-- vectors are stored under `data/qdrant`
-- no extra process required
+## How It Works
 
-Optional in-memory mode (for quick tests):
+Detailed execution flow:
 
-export QDRANT_MODE=memory
+1. Upload and Parse
+- The ingest endpoint receives a file and routes logic by file extension.
+- Python code is parsed into AST nodes (function_definition and class_definition).
 
-Optional Docker mode:
+2. Build Chunks and Metadata
+- Each chunk stores:
+  - chunk text
+  - symbol name
+  - symbol type (function/class)
+  - file name
+  - start and end lines
+  - called functions for that symbol
 
-docker run -p 6333:6333 -v $(pwd)/data/qdrant:/qdrant/storage qdrant/qdrant
-export QDRANT_MODE=docker
-export QDRANT_URL=http://127.0.0.1:6333
+3. Extract Call Graph
+- A call graph map is generated as:
+- function_name -> [called_function_1, called_function_2, ...]
 
-## Test Vector Store And Search
+4. Embed and Store
+- Chunks are embedded and upserted into Qdrant with payload fields like file_name, chunk_index, and chunk_text.
 
-1. Ingest a file (stores chunks + embeddings in Qdrant):
+5. Retrieve with Hybrid Search
+- Semantic ranking returns nearest chunks by vector similarity.
+- BM25 scores lexical relevance over retrieved chunk text.
+- RRF merges both rankings into a single robust top-k list.
 
+6. Build Context
+- The system formats retrieved chunks into a deterministic context block:
+- chunk id, file name, line info, and code.
+
+7. Flow Query Enrichment
+- If query intent contains terms such as flow, call, called by, or dependency:
+- Additional Flow section is injected, generated from retrieved chunk call relationships.
+
+8. Generate Answer
+- If OPENAI_API_KEY is set, OpenAI response generation is used.
+- Otherwise, local generation returns:
+  - flow explanation for flow queries
+  - keyword-grounded local summary for general queries
+
+## Example Queries and Outputs
+
+Example 1: Flow reasoning
+
+Query:
+
+~~~text
+which function is called by login
+~~~
+
+Output:
+
+~~~text
+Flow Explanation:
+login calls validate_user, log_event
+validate_user calls db_check
+~~~
+
+Example 2: Code understanding
+
+~~~text
+How is user validation implemented?
+~~~
+
+Expected behavior:
+
+- Retrieves relevant function chunks
+- Includes file and line-grounded context
+- Returns local or LLM-generated concise explanation
+
+## Setup Instructions
+
+1. Create and activate virtual environment
+
+~~~bash
+python3 -m venv .venv
+source .venv/bin/activate
+~~~
+
+2. Install dependencies
+
+~~~bash
+pip install -r requirements.txt
+~~~
+
+3. Configure environment (optional)
+
+~~~bash
+cp .env.example .env
+~~~
+
+Optional variables:
+
+- QDRANT_MODE=local | memory | docker
+- QDRANT_URL=http://127.0.0.1:6333 (required for docker mode)
+- OPENAI_API_KEY=your_api_key
+- OPENAI_MODEL=gpt-4o-mini
+
+4. Run the API
+
+~~~bash
+uvicorn app.main:app --reload --port 8000
+~~~
+
+5. Verify service
+
+~~~bash
+curl http://127.0.0.1:8000/health
+~~~
+
+6. Ingest code/document
+
+~~~bash
 curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=120&overlap=20" \
-   -F "file=@/path/to/file.txt"
+  -F "file=@/absolute/path/to/file.py"
+~~~
 
-Check response fields:
-- collection
-- stored_count
-- point_ids
+7. Run search
 
-2. Run similarity search (top-k):
+~~~bash
+curl "http://127.0.0.1:8000/api/search?query=login%20flow&top_k=5"
+~~~
 
-curl "http://127.0.0.1:8000/api/search?query=your%20question&top_k=3"
+8. Run full query pipeline
 
-Search response includes:
-- score
-- file_name
-- chunk_index
-- chunk_text
-
-## Test Full RAG Query Pipeline
-
-1. (Optional) Enable OpenAI answer generation:
-
-export OPENAI_API_KEY=your_api_key
-export OPENAI_MODEL=gpt-4o-mini
-
-If OPENAI_API_KEY is not set, the API uses a local fallback answer generator.
-
-2. Ingest at least one file first:
-
-curl -X POST "http://127.0.0.1:8000/api/ingest?chunk_size=120&overlap=20" \
-   -F "file=@/path/to/file.txt"
-
-3. Run full RAG query:
-
+~~~bash
 curl -X POST "http://127.0.0.1:8000/api/query" \
-   -H "Content-Type: application/json" \
-   -d '{"query":"What does the document say about cloud services?","top_k":3}'
+  -H "Content-Type: application/json" \
+  -d '{"query":"which function is called by login","top_k":3}'
+~~~
 
-Response includes:
-- answers
-- retrieved_chunks (id, score, file_name, chunk_index, chunk_text)
+## Future Improvements
+
+- Cross-file and class-method call graph resolution
+- Language-agnostic AST adapters (JavaScript, Java, Go)
+- Re-ranking with code-specialized cross-encoders
+- Dependency graph and import graph integration
+- Incremental indexing for large monorepos
+- Evaluation suite with retrieval and answer quality metrics
+- UI dashboard for exploration of code flows and evidence chunks

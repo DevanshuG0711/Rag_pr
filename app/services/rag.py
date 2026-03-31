@@ -137,45 +137,101 @@ def _generate_with_openai(query: str, context: str) -> str:
 
 ## Improved local answer generation without LLM, using simple keyword matching and sentence extraction. #
 
-def _generate_local_answer(query: str, chunks: List[Dict[str, object]]) -> str:
+# def _generate_local_answer(query: str, chunks: List[Dict[str, object]]) -> str:
+#     if not chunks:
+#         return "I could not find relevant context."
+
+#     import re
+
+#     def clean_words(text):
+#         return set(re.findall(r'\b\w+\b', text.lower()))
+
+#     top_chunks = chunks[:3]
+#     combined_text = " ".join(str(c.get("chunk_text") or "") for c in top_chunks)
+
+#     # FIXED split
+#     sentences = re.split(r'(?<=[.!?])\s+', combined_text.strip())
+
+#     query_words = clean_words(query)
+
+#     def score(sentence):
+#         return len(clean_words(sentence) & query_words)
+
+#     ranked = sorted(sentences, key=score, reverse=True)
+
+#     best = [s for s in ranked if score(s) > 0][:1]
+	
+#     if not best:
+#         best = sentences[:1]
+
+#     return "Local Answer: " + " ".join(best)
+
+# The above function tries to extract the most relevant sentences from the top 3 chunks based on keyword overlap with the query. This is a simple heuristic that can provide a more informative answer than just taking the top chunk's text.
+
+## Further improved local answer generation with flow detection and explanation. #
+def _generate_local_answer(
+    query: str,
+    context: str,
+    chunks: List[Dict[str, object]]
+) -> str:
     if not chunks:
         return "I could not find relevant context."
 
     import re
 
+    query_lower = query.lower()
+
+    # 🔥 STEP 1: FLOW DETECTION
+    if any(word in query_lower for word in ["flow", "call", "depend"]):
+        lines = context.splitlines()
+
+        flow_lines = []
+        capture = False
+
+        for line in lines:
+            if line.strip().startswith("Flow:"):
+                capture = True
+                continue
+
+            if capture:
+                if not line.strip():
+                    break
+                flow_lines.append(line.strip())
+
+        if flow_lines:
+            return "Flow Explanation:\n" + "\n".join(flow_lines)
+
+    # 🔥 STEP 2: OLD LOGIC (unchanged)
     def clean_words(text):
         return set(re.findall(r'\b\w+\b', text.lower()))
 
     top_chunks = chunks[:3]
     combined_text = " ".join(str(c.get("chunk_text") or "") for c in top_chunks)
 
-    # FIXED split
     sentences = re.split(r'(?<=[.!?])\s+', combined_text.strip())
-
     query_words = clean_words(query)
 
     def score(sentence):
         return len(clean_words(sentence) & query_words)
 
     ranked = sorted(sentences, key=score, reverse=True)
-
     best = [s for s in ranked if score(s) > 0][:1]
-	
+
     if not best:
         best = sentences[:1]
 
     return "Local Answer: " + " ".join(best)
 
-# The above function tries to extract the most relevant sentences from the top 3 chunks based on keyword overlap with the query. This is a simple heuristic that can provide a more informative answer than just taking the top chunk's text.
+# The updated _generate_local_answer function first checks if the query is likely asking about the flow of function calls. If it detects flow-related terms, it tries to extract and return the flow explanation from the context. If not, it falls back to the original keyword-based sentence extraction method. This way, we can provide a more relevant answer for flow-related queries without needing an LLM.
 
 def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -> str:
 	if os.getenv("OPENAI_API_KEY"):
 		try:
 			return _generate_with_openai(query=query, context=context)
 		except Exception:
-			return _generate_local_answer(query=query, chunks=chunks)
+			return _generate_local_answer(query=query, context=context, chunks=chunks)
 
-	return _generate_local_answer(query=query, chunks=chunks)
+	return _generate_local_answer(query=query, context=context, chunks=chunks)
 
 
 def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, object]]]:
