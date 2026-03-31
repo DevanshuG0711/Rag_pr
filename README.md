@@ -127,5 +127,5 @@ curl -X POST "http://127.0.0.1:8000/api/query" \
    -d '{"query":"What does the document say about cloud services?","top_k":3}'
 
 Response includes:
-- answer
+- answers
 - retrieved_chunks (id, score, file_name, chunk_index, chunk_text)
