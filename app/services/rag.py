@@ -77,36 +77,32 @@ def _generate_with_openai(query: str, context: str) -> str:
 
 def _generate_local_answer(query: str, chunks: List[Dict[str, object]]) -> str:
     if not chunks:
-        return "I could not find relevant context to answer this question."
+        return "I could not find relevant context."
 
-    # Step 1: Take top 3 chunks (instead of 1)
+    import re
+
+    def clean_words(text):
+        return set(re.findall(r'\b\w+\b', text.lower()))
+
     top_chunks = chunks[:3]
+    combined_text = " ".join(str(c.get("chunk_text") or "") for c in top_chunks)
 
-    # Step 2: Combine text
-    combined_text = " ".join(str(chunk.get("chunk_text") or "") for chunk in top_chunks)
+    # FIXED split
+    sentences = re.split(r'(?<=[.!?])\s+', combined_text.strip())
 
-    # Step 3: Break into sentences
-    sentences = re.split(r'(?<=[.!?]) +', combined_text)
-
-    # Step 4: Filter relevant sentences using query keywords
-    query_words = set(query.lower().split())
+    query_words = clean_words(query)
 
     def score(sentence):
-        words = set(sentence.lower().split())
-        return len(query_words & words)
+        return len(clean_words(sentence) & query_words)
 
-    ranked_sentences = sorted(sentences, key=score, reverse=True)
+    ranked = sorted(sentences, key=score, reverse=True)
 
-    # Step 5: Pick top relevant sentences
-    best_sentences = [s for s in ranked_sentences if score(s) > 0][:3]
+    best = [s for s in ranked if score(s) > 0][:2]
 
-    if not best_sentences:
-        best_sentences = sentences[:2]  # fallback
+    if not best:
+        best = sentences[:1]
 
-    # Step 6: Create final answer
-    answer = " ".join(best_sentences)
-
-    return f"Local Answer (fallback mode): {answer}"
+    return "Local Answer: " + " ".join(best)
 
 # The above function tries to extract the most relevant sentences from the top 3 chunks based on keyword overlap with the query. This is a simple heuristic that can provide a more informative answer than just taking the top chunk's text.
 
