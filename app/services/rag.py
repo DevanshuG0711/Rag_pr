@@ -1,4 +1,6 @@
 import os
+import re
+from typing import List, Dict
 
 from app.services.embeddings import generate_embeddings
 from app.services.vector_store import search_similar_chunks
@@ -61,16 +63,52 @@ def _generate_with_openai(query: str, context: str) -> str:
 	return response.output_text.strip()
 
 
-def _generate_local_answer(query: str, chunks: list[dict[str, object]]) -> str:
-	if not chunks:
-		return "I could not find relevant context to answer this question."
+# def _generate_local_answer(query: str, chunks: list[dict[str, object]]) -> str:
+# 	if not chunks:
+# 		return "I could not find relevant context to answer this question."
 
-	top_chunk_text = str(chunks[0].get("chunk_text") or "")
-	return (
-		"Local fallback answer (no OpenAI key configured). "
-		f"Best matching context says: {top_chunk_text}"
-	)
+# 	top_chunk_text = str(chunks[0].get("chunk_text") or "")
+# 	return (
+# 		"Local fallback answer (no OpenAI key configured). "
+# 		f"Best matching context says: {top_chunk_text}"
+# 	)
 
+## Improved local answer generation without LLM, using simple keyword matching and sentence extraction. #
+
+def _generate_local_answer(query: str, chunks: List[Dict[str, object]]) -> str:
+    if not chunks:
+        return "I could not find relevant context to answer this question."
+
+    # Step 1: Take top 3 chunks (instead of 1)
+    top_chunks = chunks[:3]
+
+    # Step 2: Combine text
+    combined_text = " ".join(str(chunk.get("chunk_text") or "") for chunk in top_chunks)
+
+    # Step 3: Break into sentences
+    sentences = re.split(r'(?<=[.!?]) +', combined_text)
+
+    # Step 4: Filter relevant sentences using query keywords
+    query_words = set(query.lower().split())
+
+    def score(sentence):
+        words = set(sentence.lower().split())
+        return len(query_words & words)
+
+    ranked_sentences = sorted(sentences, key=score, reverse=True)
+
+    # Step 5: Pick top relevant sentences
+    best_sentences = [s for s in ranked_sentences if score(s) > 0][:3]
+
+    if not best_sentences:
+        best_sentences = sentences[:2]  # fallback
+
+    # Step 6: Create final answer
+    answer = " ".join(best_sentences)
+
+    return f"Local Answer (fallback mode): {answer}"
+
+# The above function tries to extract the most relevant sentences from the top 3 chunks based on keyword overlap with the query. This is a simple heuristic that can provide a more informative answer than just taking the top chunk's text.
 
 def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -> str:
 	try:
