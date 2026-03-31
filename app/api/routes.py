@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from fastapi import Query
 from fastapi import UploadFile
 
+from ast_chunking import extract_python_ast_chunks
 from app.services.chunking import chunk_text
 from app.services.embeddings import DEFAULT_EMBEDDING_MODEL
 from app.services.embeddings import embedding_dimension
@@ -40,7 +41,23 @@ async def ingest_document(
 
 	try:
 		text = extract_text(file_name=file_name, file_bytes=file_bytes)
-		chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
+		chunk_metadata: list[dict[str, object]] = []
+
+		if file_name.lower().endswith(".py"):
+			ast_chunks = extract_python_ast_chunks(file_path=file_name, file_content=text)
+			chunks = [chunk["chunk_text"] for chunk in ast_chunks]
+			chunk_metadata = [
+				{
+					"name": chunk["name"],
+					"type": chunk["type"],
+					"file_name": chunk["file_name"],
+					"start_line": chunk["start_line"],
+					"end_line": chunk["end_line"],
+				}
+				for chunk in ast_chunks
+			]
+		else:
+			chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -65,6 +82,7 @@ async def ingest_document(
 		"overlap": overlap,
 		"chunk_count": len(chunks),
 		"chunks": chunks,
+		"chunk_metadata": chunk_metadata,
 		"embedding_model": DEFAULT_EMBEDDING_MODEL,
 		"embedding_dimension": embedding_dimension(),
 		"embedding_count": len(embeddings),

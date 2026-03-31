@@ -25,7 +25,9 @@ def extract_text(file_name: str, file_bytes: bytes) -> str:
 
 	if lowered.endswith(".txt"):
 		return extract_text_from_txt(file_bytes)
+	if lowered.endswith(".py"):
+		return extract_text_from_txt(file_bytes)
 	if lowered.endswith(".pdf"):
 		return extract_text_from_pdf(file_bytes)
 
-	raise ValueError("Unsupported file type. Use .txt or .pdf")
+	raise ValueError("Unsupported file type. Use .txt, .py, or .pdf")
