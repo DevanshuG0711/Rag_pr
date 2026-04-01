@@ -327,6 +327,12 @@ Result: high-precision + high-recall retrieval
 - Flow injection for dependency queries
 - Local fallback + optional LLM
 
+### Some more Features
+- OpenAI integration
+- Local LLM support via Ollama
+- Intelligent fallback system
+- Flow detection in code
+
 ---
 
 ## ⚙️ Tech Stack
