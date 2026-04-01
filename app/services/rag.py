@@ -1,7 +1,10 @@
 import os
 import re
+import json
 import logging
 from typing import List, Dict
+from urllib import request as urllib_request
+from urllib.error import URLError, HTTPError
 
 from app.services.call_graph import extract_call_graph
 from app.services.hybrid_search import hybrid_search
@@ -10,6 +13,18 @@ from app.services.query_classifier import classify_query
 
 logger = logging.getLogger(__name__)
 FLOW_QUERY_TERMS = ("flow", "calls", "called by", "dependency")
+OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_MODEL = "llama3"
+
+
+def _is_ollama_available() -> bool:
+	url = f"{OLLAMA_BASE_URL}/api/tags"
+
+	try:
+		with urllib_request.urlopen(url, timeout=2.0) as response:
+			return response.status == 200
+	except (URLError, HTTPError, TimeoutError):
+		return False
 
 
 def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict[str, object]]:
@@ -125,6 +140,62 @@ def _generate_with_openai(query: str, context: str) -> str:
 	return response.output_text.strip()
 
 
+def _generate_with_ollama(query: str, context: str) -> str:
+	url = f"{OLLAMA_BASE_URL}/api/generate"
+	prompt = (
+		"You are a code assistant.\n"
+		"Use the provided context to answer the question clearly and concisely.\n\n"
+		"Context:\n"
+		f"{context}\n\n"
+		"Question:\n"
+		f"{query}\n"
+	)
+	payload = {
+		"model": OLLAMA_MODEL,
+		"prompt": prompt,
+		"stream": True,
+	}
+	data = json.dumps(payload).encode("utf-8")
+	req = urllib_request.Request(
+		url,
+		data=data,
+		headers={"Content-Type": "application/json"},
+		method="POST",
+	)
+
+	parts: list[str] = []
+
+	try:
+		with urllib_request.urlopen(req, timeout=30.0) as response:
+			if response.status != 200:
+				raise ValueError(f"Ollama returned status {response.status}")
+
+			for raw_line in response:
+				line = raw_line.decode("utf-8").strip()
+				if not line:
+					continue
+
+				try:
+					chunk = json.loads(line)
+				except json.JSONDecodeError:
+					continue
+
+				if "error" in chunk:
+					raise ValueError(f"Ollama error: {chunk['error']}")
+
+				piece = chunk.get("response")
+				if piece:
+					parts.append(str(piece))
+	except (URLError, HTTPError, TimeoutError) as exc:
+		raise ValueError("Failed to reach Ollama") from exc
+
+	final_text = "".join(parts).strip()
+	if not final_text:
+		raise ValueError("Ollama returned an empty response")
+
+	return final_text
+
+
 # def _generate_local_answer(query: str, chunks: list[dict[str, object]]) -> str:
 # 	if not chunks:
 # 		return "I could not find relevant context to answer this question."
@@ -189,13 +260,13 @@ def _generate_local_answer(
         capture = False
 
         for line in lines:
-            if line.strip().startswith("Flow:"):
+            if "Flow:" in line:
                 capture = True
                 continue
 
             if capture:
-                if not line.strip():
-                    break
+                if line.strip() == "":
+                    continue
                 flow_lines.append(line.strip())
 
         if flow_lines:
@@ -228,6 +299,17 @@ def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -
 	if os.getenv("OPENAI_API_KEY"):
 		try:
 			return _generate_with_openai(query=query, context=context)
+		except Exception:
+			if _is_ollama_available():
+				try:
+					return _generate_with_ollama(query=query, context=context)
+				except Exception:
+					return _generate_local_answer(query=query, context=context, chunks=chunks)
+			return _generate_local_answer(query=query, context=context, chunks=chunks)
+
+	if _is_ollama_available():
+		try:
+			return _generate_with_ollama(query=query, context=context)
 		except Exception:
 			return _generate_local_answer(query=query, context=context, chunks=chunks)
 
