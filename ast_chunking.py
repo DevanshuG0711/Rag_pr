@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 from pathlib import Path
-from typing import TypedDict
+from typing import Dict, List, TypedDict
 
 import tree_sitter_python as tspython
 from tree_sitter import Language, Node, Parser
@@ -16,6 +17,8 @@ class ASTChunk(TypedDict):
     start_line: int
     end_line: int
     file_name: str
+    docstring: str
+    imports: list[str]
 
 
 def _create_parser() -> Parser:
@@ -37,11 +40,58 @@ def _node_name(node: Node, source_bytes: bytes) -> str:
     return source_bytes[name_node.start_byte : name_node.end_byte].decode("utf-8")
 
 
+def _node_text(node: Node, source_bytes: bytes) -> str:
+    return source_bytes[node.start_byte : node.end_byte].decode("utf-8")
+
+
+def _extract_file_imports(root_node: Node, source_bytes: bytes) -> list[str]:
+    imports: list[str] = []
+
+    for child in root_node.children:
+        if child.type in {"import_statement", "import_from_statement"}:
+            statement = _node_text(child, source_bytes).strip()
+            if statement:
+                imports.append(statement)
+
+    return imports
+
+
+def _extract_function_docstring(function_node: Node, source_bytes: bytes) -> str | None:
+    body_node = function_node.child_by_field_name("body")
+    if body_node is None:
+        return None
+
+    first_named = None
+    for child in body_node.children:
+        if child.is_named:
+            first_named = child
+            break
+
+    if first_named is None or first_named.type != "expression_statement":
+        return None
+
+    string_node = None
+    for child in first_named.children:
+        if child.is_named:
+            string_node = child
+            break
+
+    if string_node is None or string_node.type not in {"string", "concatenated_string"}:
+        return None
+
+    raw_literal = _node_text(string_node, source_bytes)
+    try:
+        value = ast.literal_eval(raw_literal)
+        return value if isinstance(value, str) else None
+    except Exception:
+        return raw_literal.strip()
+
+
 def _extract_chunk(node: Node, source_bytes: bytes, file_name: str) -> ASTChunk:
     node_type = "function" if node.type == "function_definition" else "class"
 
     return {
-        "chunk_text": source_bytes[node.start_byte : node.end_byte].decode("utf-8"),
+        "chunk_text": _node_text(node, source_bytes),
         "name": _node_name(node, source_bytes),
         "type": node_type,
         "start_line": node.start_point[0] + 1,
@@ -50,23 +100,75 @@ def _extract_chunk(node: Node, source_bytes: bytes, file_name: str) -> ASTChunk:
     }
 
 
-def extract_python_ast_chunks(file_path: str, file_content: str) -> list[ASTChunk]:
-    parser = _create_parser()
-    source_bytes = file_content.encode("utf-8")
+def extract_ast_chunks(code: str, parser) -> List[Dict]:
+    source_bytes = code.encode("utf-8")
     tree = parser.parse(source_bytes)
+    imports = _extract_file_imports(tree.root_node, source_bytes)
 
-    file_name = Path(file_path).name
-    chunks: list[ASTChunk] = []
+    chunks: List[Dict] = []
     stack = [tree.root_node]
 
     while stack:
         node = stack.pop()
 
         if node.type in {"function_definition", "class_definition"}:
-            chunks.append(_extract_chunk(node, source_bytes, file_name))
+            name_node = node.child_by_field_name("name")
+            symbol_name = _node_name(node, source_bytes) if name_node is not None else "<anonymous>"
+
+            chunk: Dict[str, object] = {
+                "chunk_text": _node_text(node, source_bytes),
+                "start_line": node.start_point[0] + 1,
+                "end_line": node.end_point[0] + 1,
+                "imports": imports,
+            }
+
+            if node.type == "function_definition":
+                chunk["function_name"] = symbol_name
+                docstring = _extract_function_docstring(node, source_bytes)
+                if docstring:
+                    chunk["docstring"] = docstring
+            else:
+                chunk["class_name"] = symbol_name
+
+            chunks.append(chunk)
+            # Do not descend into this node to avoid nested duplication.
+            continue
 
         for child in reversed(node.children):
             stack.append(child)
+
+    return chunks
+
+
+def extract_python_ast_chunks(file_path: str, file_content: str) -> list[ASTChunk]:
+    parser = _create_parser()
+    file_name = Path(file_path).name
+    raw_chunks = extract_ast_chunks(code=file_content, parser=parser)
+
+    chunks: list[ASTChunk] = []
+    for raw in raw_chunks:
+        function_name = raw.get("function_name")
+        class_name = raw.get("class_name")
+
+        if function_name is not None:
+            name = str(function_name)
+            node_type = "function"
+        else:
+            name = str(class_name)
+            node_type = "class"
+
+        chunks.append(
+            {
+                "chunk_text": str(raw.get("chunk_text") or ""),
+                "name": name,
+                "type": node_type,
+                "start_line": int(raw["start_line"]),
+                "end_line": int(raw["end_line"]),
+                "file_name": file_name,
+                "docstring": str(raw.get("docstring") or ""),
+                "imports": list(raw.get("imports") or []),
+            }
+        )
 
     return chunks
 

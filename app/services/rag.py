@@ -7,6 +7,7 @@ from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
 
 from app.services.call_graph import extract_call_graph
+from app.services.call_graph_query import get_call_graph_for_file
 from app.services.hybrid_search import hybrid_search
 from app.services.query_classifier import classify_query
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 FLOW_QUERY_TERMS = ("flow", "calls", "called by", "dependency")
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "llama3"
+CONTEXT_MAX_TOKENS = 1200
 
 
 def _is_ollama_available() -> bool:
@@ -46,8 +48,10 @@ def build_context(chunks: list[dict[str, object]]) -> str:
 	if not chunks:
 		return ""
 
-	parts: list[str] = ["=== Context ===", ""]
-	for idx, chunk in enumerate(chunks[:5], start=1):
+	def _estimate_tokens(text: str) -> int:
+		return len(text) // 4
+
+	def _format_chunk(idx: int, chunk: dict[str, object]) -> str:
 		file_name = str(chunk.get("file_name") or "unknown")
 		start_line = chunk.get("start_line")
 		end_line = chunk.get("end_line")
@@ -58,7 +62,7 @@ def build_context(chunks: list[dict[str, object]]) -> str:
 			line_info = f"chunk-{chunk_index}" if chunk_index is not None else "N/A"
 		chunk_text = str(chunk.get("chunk_text") or "")
 
-		parts.extend(
+		return "\n".join(
 			[
 				f"[Chunk {idx}]",
 				f"File: {file_name}",
@@ -68,6 +72,21 @@ def build_context(chunks: list[dict[str, object]]) -> str:
 				"",
 			]
 		)
+
+	parts: list[str] = ["=== Context ===", ""]
+	token_count = _estimate_tokens("\n".join(parts))
+
+	for idx, chunk in enumerate(chunks, start=1):
+		chunk_block = _format_chunk(idx=idx, chunk=chunk)
+		chunk_tokens = _estimate_tokens(chunk_block)
+
+		# Always include the first chunk, even if it exceeds budget.
+		if idx > 1 and token_count + chunk_tokens > CONTEXT_MAX_TOKENS:
+			break
+
+		parts.append(chunk_block)
+		token_count += chunk_tokens
+	
 
 	return "\n".join(parts).rstrip()
 
@@ -102,6 +121,18 @@ def _build_flow_context(chunks: list[dict[str, object]]) -> str:
 		if not called_funcs:
 			continue
 		lines.append(f"{func} calls {', '.join(called_funcs)}")
+
+	if len(lines) == 1:
+		return ""
+
+	return "\n".join(lines)
+
+
+def _build_flow_from_db(graph: dict[str, list[str]]) -> str:
+	lines = ["Flow:"]
+	for func, called in graph.items():
+		if called:
+			lines.append(f"{func} calls {', '.join(called)}")
 
 	if len(lines) == 1:
 		return ""
@@ -321,7 +352,32 @@ def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, ob
 	context = build_context(retrieved_chunks)
 
 	if _is_flow_query(query):
-		flow_context = _build_flow_context(retrieved_chunks)
+		db_graph: dict[str, list[str]] = {}
+		file_name = ""
+
+		for chunk in retrieved_chunks:
+			candidate = str(chunk.get("file_name") or "").strip()
+			if candidate:
+				file_name = candidate
+				break
+
+		if file_name:
+			try:
+				db_graph = get_call_graph_for_file(file_name=file_name)
+			except Exception:
+				db_graph = {}
+
+		if db_graph:
+			flow_context = _build_flow_from_db(db_graph)
+		else:
+			# flow_context = _build_flow_context(retrieved_chunks)
+			if _is_flow_query(query):
+				db_graph = get_call_graph_for_file(file_name)
+				if db_graph:
+					flow_context = _build_flow_from_db(db_graph)
+				else:
+					flow_context = _build_flow_context(retrieved_chunks)
+
 		if flow_context:
 			context = f"{context}\n\n{flow_context}" if context else flow_context
 

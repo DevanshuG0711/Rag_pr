@@ -47,6 +47,8 @@ def extract_python_chunks_and_graph(code: str, file_name: str) -> tuple[list[str
 			"file_name": chunk["file_name"],
 			"start_line": chunk["start_line"],
 			"end_line": chunk["end_line"],
+			"docstring": chunk.get("docstring") or "",
+			"imports": chunk.get("imports", []),
 			"called_functions": call_graph.get(chunk["name"], []),
 		}
 		for chunk in ast_chunks

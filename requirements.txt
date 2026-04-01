@@ -6,3 +6,5 @@ sentence-transformers==5.1.0
 qdrant-client==1.15.1
 pypdf==5.9.0
 openai==1.107.2
+psycopg2-binary==2.9.11
+python-dotenv==1.0.1

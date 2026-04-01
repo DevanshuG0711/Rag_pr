@@ -49,10 +49,13 @@ def store_chunk_embeddings(
 	file_name: str,
 	chunks: list[str],
 	embeddings: list[list[float]],
+	chunk_metadata: list[dict[str, object]] | None = None,
 	collection_name: str = COLLECTION_NAME,
 ) -> list[str]:
 	if len(chunks) != len(embeddings):
 		raise ValueError("chunks and embeddings must have the same length")
+	if chunk_metadata is not None and len(chunk_metadata) != len(chunks):
+		raise ValueError("chunk_metadata and chunks must have the same length")
 	if not embeddings:
 		return []
 
@@ -66,15 +69,30 @@ def store_chunk_embeddings(
 		point_id = str(uuid4())
 		point_ids.append(point_id)
 
+		payload = {
+			"file_name": file_name,
+			"chunk_index": chunk_index,
+			"chunk_text": chunk,
+		}
+
+		if chunk_metadata is not None:
+			meta = chunk_metadata[chunk_index]
+			payload.update(
+				{
+					"name": meta.get("name"),
+					"type": meta.get("type"),
+					"start_line": meta.get("start_line"),
+					"end_line": meta.get("end_line"),
+					"docstring": meta.get("docstring") or "",
+					"imports": meta.get("imports", []),
+				}
+			)
+
 		points.append(
 			PointStruct(
 				id=point_id,
 				vector=embedding,
-				payload={
-					"file_name": file_name,
-					"chunk_index": chunk_index,
-					"chunk_text": chunk,
-				},
+				payload=payload,
 			)
 		)
 

@@ -12,6 +12,7 @@ from app.services.embeddings import embedding_dimension
 from app.services.embeddings import generate_embeddings
 from app.services.ingest import extract_text
 from app.services.ingest import extract_python_chunks_and_graph
+from app.services.call_graph_store import upsert_call_graph
 from app.models.schemas import QueryRequest
 from app.models.schemas import QueryResponse
 from app.services.rag import run_rag_pipeline
@@ -59,11 +60,22 @@ async def ingest_document(
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail="Failed to generate embeddings") from exc
 
+	call_graph_rows_upserted = 0
+	if call_graph:
+		print("CALL GRAPH:", call_graph)
+		try:
+			print("before upsert_call_graph")
+			call_graph_rows_upserted = upsert_call_graph(file_name=file_name, call_graph=call_graph)
+			print("after upsert_call_graph")
+		except Exception as exc:
+			raise HTTPException(status_code=500, detail="Failed to store call graph") from exc
+
 	try:
 		point_ids = store_chunk_embeddings(
 			file_name=file_name,
 			chunks=chunks,
 			embeddings=embeddings,
+			chunk_metadata=chunk_metadata if chunk_metadata else None,
 		)
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail="Failed to store vectors") from exc
@@ -84,6 +96,7 @@ async def ingest_document(
 		"collection": COLLECTION_NAME,
 		"stored_count": len(point_ids),
 		"point_ids": point_ids,
+		"call_graph_rows_upserted": call_graph_rows_upserted,
 		"text": text,
 	}
 
@@ -107,6 +120,7 @@ def search_chunks(query: str, top_k: int = Query(default=5, ge=1)) -> dict[str, 
 		"collection": COLLECTION_NAME,
 		"results": results,
 	}
+
 
 
 @router.post("/query", response_model=QueryResponse)
