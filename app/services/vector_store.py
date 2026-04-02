@@ -4,6 +4,9 @@ from uuid import uuid4
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance
+from qdrant_client.models import FieldCondition
+from qdrant_client.models import Filter
+from qdrant_client.models import MatchValue
 from qdrant_client.models import PointStruct
 from qdrant_client.models import VectorParams
 
@@ -131,7 +134,103 @@ def search_similar_chunks(
 				"file_name": payload.get("file_name"),
 				"chunk_index": payload.get("chunk_index"),
 				"chunk_text": payload.get("chunk_text"),
+				"name": payload.get("name"),
+				"type": payload.get("type"),
+				"start_line": payload.get("start_line"),
+				"end_line": payload.get("end_line"),
+				"docstring": payload.get("docstring") or "",
+				"imports": payload.get("imports", []),
 			}
 		)
+
+	return results
+
+
+def fetch_chunks_by_function_names(
+	function_names: list[str],
+	file_names: list[str] | None = None,
+	collection_name: str = COLLECTION_NAME,
+	limit_per_function: int = 10,
+) -> list[dict[str, object]]:
+	if not function_names:
+		return []
+
+	client = get_qdrant_client()
+	if not client.collection_exists(collection_name=collection_name):
+		return []
+
+	normalized_functions = list(dict.fromkeys(str(name) for name in function_names if str(name).strip()))
+	normalized_files = list(dict.fromkeys(str(name) for name in (file_names or []) if str(name).strip()))
+
+	results: list[dict[str, object]] = []
+	seen_ids: set[str] = set()
+
+	for function_name in normalized_functions:
+		filters = [FieldCondition(key="name", match=MatchValue(value=function_name))]
+
+		if normalized_files:
+			for file_name in normalized_files:
+				points, _ = client.scroll(
+					collection_name=collection_name,
+					scroll_filter=Filter(
+						must=[
+							*filters,
+							FieldCondition(key="file_name", match=MatchValue(value=file_name)),
+						]
+					),
+					limit=limit_per_function,
+					with_payload=True,
+				)
+
+				for point in points:
+					point_id = str(point.id)
+					if point_id in seen_ids:
+						continue
+					seen_ids.add(point_id)
+					payload = point.payload or {}
+					results.append(
+						{
+							"id": point_id,
+							"score": 0.0,
+							"file_name": payload.get("file_name"),
+							"chunk_index": payload.get("chunk_index"),
+							"chunk_text": payload.get("chunk_text"),
+							"name": payload.get("name"),
+							"type": payload.get("type"),
+							"start_line": payload.get("start_line"),
+							"end_line": payload.get("end_line"),
+							"docstring": payload.get("docstring") or "",
+							"imports": payload.get("imports", []),
+						}
+					)
+		else:
+			points, _ = client.scroll(
+				collection_name=collection_name,
+				scroll_filter=Filter(must=filters),
+				limit=limit_per_function,
+				with_payload=True,
+			)
+
+			for point in points:
+				point_id = str(point.id)
+				if point_id in seen_ids:
+					continue
+				seen_ids.add(point_id)
+				payload = point.payload or {}
+				results.append(
+					{
+						"id": point_id,
+						"score": 0.0,
+						"file_name": payload.get("file_name"),
+						"chunk_index": payload.get("chunk_index"),
+						"chunk_text": payload.get("chunk_text"),
+						"name": payload.get("name"),
+						"type": payload.get("type"),
+						"start_line": payload.get("start_line"),
+						"end_line": payload.get("end_line"),
+						"docstring": payload.get("docstring") or "",
+						"imports": payload.get("imports", []),
+					}
+				)
 
 	return results

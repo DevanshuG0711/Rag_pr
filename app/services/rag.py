@@ -3,13 +3,19 @@ import re
 import json
 import logging
 from typing import List, Dict
+from typing import Literal
 from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
 
 from app.services.call_graph import extract_call_graph
+from app.services.call_graph_query import build_graph
+from app.services.call_graph_query import expand_with_graph
+from app.services.call_graph_query import get_callees
+from app.services.call_graph_query import get_callers
 from app.services.call_graph_query import get_call_graph_for_file
 from app.services.hybrid_search import hybrid_search
 from app.services.query_classifier import classify_query
+from app.services.vector_store import fetch_chunks_by_function_names
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +23,16 @@ FLOW_QUERY_TERMS = ("flow", "calls", "called by", "dependency")
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "llama3"
 CONTEXT_MAX_TOKENS = 1200
+QUERY_TYPO_FIXES = {
+	"funtion": "function",
+	"fuction": "function",
+	"fucntion": "function",
+	"cal": "call",
+	"clal": "call",
+	"caal": "call",
+	"cals": "calls",
+	"clls": "calls",
+}
 
 
 def _is_ollama_available() -> bool:
@@ -27,6 +43,65 @@ def _is_ollama_available() -> bool:
 			return response.status == 200
 	except (URLError, HTTPError, TimeoutError):
 		return False
+
+
+def _normalize_query_for_intent(query: str) -> str:
+	normalized = query.lower()
+
+	for typo, correction in QUERY_TYPO_FIXES.items():
+		normalized = re.sub(rf"\b{re.escape(typo)}\b", correction, normalized)
+
+	# Normalize call variants like call/calls/calling/called to a stable token.
+	normalized = re.sub(r"\bcall(?:s|ed|ing)?\b", "calls", normalized)
+	normalized = re.sub(r"\s+", " ", normalized).strip()
+	return normalized
+
+
+def _has_call_keyword(normalized_query: str) -> bool:
+	return re.search(r"\bcall[a-z]*\b", normalized_query) is not None
+
+
+def _is_graph_forced_query(query: str) -> bool:
+	normalized_query = _normalize_query_for_intent(query)
+	return (
+		_has_call_keyword(normalized_query)
+		or re.search(r"\bfunction\b", normalized_query) is not None
+		or re.search(r"\bwho\b", normalized_query) is not None
+	)
+
+
+def _detect_graph_query_mode(query: str) -> Literal["none", "caller", "callee", "flow"]:
+	normalized_query = _normalize_query_for_intent(query)
+
+	if "flow" in normalized_query or "dependency" in normalized_query:
+		return "flow"
+
+	if "what does" in normalized_query and _has_call_keyword(normalized_query):
+		return "callee"
+
+	if "who calls" in normalized_query or "which function calls" in normalized_query:
+		return "caller"
+
+	if _is_graph_forced_query(query):
+		return "flow"
+
+	return "none"
+
+
+def _extract_caller_query_target(query: str) -> str:
+	normalized_query = _normalize_query_for_intent(query)
+
+	patterns = [
+		r"\bwho calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bwhich function calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+	]
+
+	for pattern in patterns:
+		match = re.search(pattern, normalized_query)
+		if match:
+			return match.group(1)
+
+	return ""
 
 
 def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict[str, object]]:
@@ -42,6 +117,127 @@ def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict[str, objec
 	logger.info("query_type=%s effective_top_k=%s", query_type, effective_top_k)
 
 	return hybrid_search(query=query, top_k=effective_top_k)
+
+
+def _unique_chunk_key(chunk: dict[str, object]) -> str:
+	file_name = str(chunk.get("file_name") or "")
+	chunk_index = chunk.get("chunk_index")
+	chunk_id = str(chunk.get("id") or "")
+
+	if file_name and chunk_index is not None:
+		return f"{file_name}:{chunk_index}"
+	if chunk_id:
+		return chunk_id
+	return str(chunk.get("chunk_text") or "")
+
+
+def _merge_dedup_chunks(original: list[dict[str, object]], extra: list[dict[str, object]]) -> list[dict[str, object]]:
+	merged: list[dict[str, object]] = []
+	seen: set[str] = set()
+
+	for chunk in [*original, *extra]:
+		key = _unique_chunk_key(chunk)
+		if key in seen:
+			continue
+		seen.add(key)
+		merged.append(chunk)
+
+	return merged
+
+
+def _expand_chunks_with_call_graph(
+	query: str,
+	retrieved_chunks: list[dict[str, object]],
+	max_depth: int = 1,
+) -> list[dict[str, object]]:
+	if not retrieved_chunks:
+		return []
+
+	graph_mode = _detect_graph_query_mode(query)
+	if graph_mode == "none":
+		return retrieved_chunks
+
+	file_names = list(
+		dict.fromkeys(
+			str(chunk.get("file_name") or "").strip()
+			for chunk in retrieved_chunks
+			if str(chunk.get("file_name") or "").strip()
+		)
+	)
+
+	merged_graph: dict[str, list[str]] = {}
+	for file_name in file_names:
+		try:
+			graph = get_call_graph_for_file(file_name=file_name)
+		except Exception:
+			graph = {}
+
+		for func_name, callees in graph.items():
+			existing = merged_graph.get(func_name, [])
+			for callee in callees:
+				if callee not in existing:
+					existing.append(callee)
+			merged_graph[func_name] = existing
+
+	if not merged_graph:
+		return retrieved_chunks
+
+	build_graph(merged_graph)
+
+	initial_function_names = [
+		str(chunk.get("name") or "").strip()
+		for chunk in retrieved_chunks
+		if str(chunk.get("type") or "") == "function" and str(chunk.get("name") or "").strip()
+	]
+
+	expanded_function_names: list[str] = []
+
+	if graph_mode == "caller":
+		caller_target = _extract_caller_query_target(query)
+		targets = [caller_target] if caller_target else list(initial_function_names)
+		expanded_function_names = list(targets)
+		for target in targets:
+			expanded_function_names.extend(get_callers(target))
+		expanded_function_names = list(dict.fromkeys(expanded_function_names))
+	elif graph_mode == "callee":
+		expanded_function_names = list(initial_function_names)
+		for target in initial_function_names:
+			expanded_function_names.extend(get_callees(target))
+		expanded_function_names = list(dict.fromkeys(expanded_function_names))
+	elif graph_mode == "flow":
+		expanded_function_names = expand_with_graph(
+			initial_function_names,
+			max_depth=max(2, max_depth),
+		)
+
+	if not expanded_function_names:
+		return retrieved_chunks
+
+	expanded_chunks = fetch_chunks_by_function_names(
+		function_names=expanded_function_names,
+		file_names=file_names,
+	)
+
+	fetched_function_names = {
+		str(chunk.get("name") or "").strip()
+		for chunk in expanded_chunks
+		if str(chunk.get("name") or "").strip()
+	}
+
+	missing_function_names = [
+		name
+		for name in expanded_function_names
+		if name not in fetched_function_names
+	]
+
+	if missing_function_names:
+		fallback_chunks = fetch_chunks_by_function_names(
+			function_names=missing_function_names,
+			file_names=None,
+		)
+		expanded_chunks = _merge_dedup_chunks(expanded_chunks, fallback_chunks)
+
+	return _merge_dedup_chunks(retrieved_chunks, expanded_chunks)
 
 
 def build_context(chunks: list[dict[str, object]]) -> str:
@@ -91,9 +287,61 @@ def build_context(chunks: list[dict[str, object]]) -> str:
 	return "\n".join(parts).rstrip()
 
 
-def _is_flow_query(query: str) -> bool:
-	query_lower = query.lower()
-	return any(term in query_lower for term in FLOW_QUERY_TERMS)
+def _build_query_aware_graph_context(
+	query: str,
+	graph: dict[str, list[str]],
+	retrieved_chunks: list[dict[str, object]],
+) -> str:
+	if not graph:
+		return ""
+
+	mode = _detect_graph_query_mode(query)
+	if mode == "none":
+		return ""
+
+	build_graph(graph)
+	target_functions = list(
+		dict.fromkeys(
+			str(chunk.get("name") or "").strip()
+			for chunk in retrieved_chunks
+			if str(chunk.get("type") or "") == "function" and str(chunk.get("name") or "").strip()
+		)
+	)
+
+	if mode == "caller":
+		caller_target = _extract_caller_query_target(query)
+		if caller_target:
+			target_functions = [caller_target]
+
+	if not target_functions:
+		return ""
+
+	relations: list[str] = []
+
+	if mode == "caller":
+		for target in target_functions:
+			for caller in get_callers(target):
+				relations.append(f"{caller} calls {target}")
+	elif mode == "callee":
+		for target in target_functions:
+			for callee in get_callees(target):
+				relations.append(f"{target} calls {callee}")
+	else:
+		expanded = expand_with_graph(target_functions, max_depth=2)
+		expanded_set = set(expanded)
+		for caller, callees in graph.items():
+			if caller not in expanded_set:
+				continue
+			for callee in callees:
+				if callee in expanded_set:
+					relations.append(f"{caller} calls {callee}")
+
+	relations = list(dict.fromkeys(relations))
+	if not relations:
+		return ""
+
+	header = "Flow:" if mode == "flow" else "Relationships:"
+	return "\n".join([header, *relations])
 
 
 def _build_flow_context(chunks: list[dict[str, object]]) -> str:
@@ -349,37 +597,65 @@ def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -
 
 def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, object]]]:
 	retrieved_chunks = retrieve_relevant_chunks(query=query, top_k=top_k)
+	retrieved_chunks = _expand_chunks_with_call_graph(query=query, retrieved_chunks=retrieved_chunks, max_depth=1)
 	context = build_context(retrieved_chunks)
+	graph_mode = _detect_graph_query_mode(query)
+	force_graph = _is_graph_forced_query(query)
+	graph_context = ""
 
-	if _is_flow_query(query):
+	if graph_mode != "none":
 		db_graph: dict[str, list[str]] = {}
-		file_name = ""
+		file_names = list(
+			dict.fromkeys(
+				str(chunk.get("file_name") or "").strip()
+				for chunk in retrieved_chunks
+				if str(chunk.get("file_name") or "").strip()
+			)
+		)
 
-		for chunk in retrieved_chunks:
-			candidate = str(chunk.get("file_name") or "").strip()
-			if candidate:
-				file_name = candidate
-				break
-
-		if file_name:
+		for file_name in file_names:
 			try:
-				db_graph = get_call_graph_for_file(file_name=file_name)
+				file_graph = get_call_graph_for_file(file_name=file_name)
 			except Exception:
-				db_graph = {}
+				file_graph = {}
 
-		if db_graph:
-			flow_context = _build_flow_from_db(db_graph)
-		else:
-			# flow_context = _build_flow_context(retrieved_chunks)
-			if _is_flow_query(query):
-				db_graph = get_call_graph_for_file(file_name)
-				if db_graph:
-					flow_context = _build_flow_from_db(db_graph)
-				else:
-					flow_context = _build_flow_context(retrieved_chunks)
+			for func_name, callees in file_graph.items():
+				existing = db_graph.get(func_name, [])
+				for callee in callees:
+					if callee not in existing:
+						existing.append(callee)
+				db_graph[func_name] = existing
 
-		if flow_context:
-			context = f"{context}\n\n{flow_context}" if context else flow_context
+		if not db_graph:
+			db_graph = {}
+			for chunk in retrieved_chunks[:5]:
+				chunk_text = str(chunk.get("chunk_text") or "")
+				if not chunk_text.strip():
+					continue
+				try:
+					chunk_graph = extract_call_graph(chunk_text)
+				except Exception:
+					continue
+				for func, called_funcs in chunk_graph.items():
+					existing = db_graph.get(func, [])
+					for called in called_funcs:
+						if called not in existing:
+							existing.append(called)
+					db_graph[func] = existing
+
+		graph_context = _build_query_aware_graph_context(
+			query=query,
+			graph=db_graph,
+			retrieved_chunks=retrieved_chunks,
+		)
+
+		if graph_context:
+			context = f"{context}\n\n{graph_context}" if context else graph_context
+
+	if force_graph:
+		if graph_context:
+			return graph_context, retrieved_chunks
+		return "Flow:\nNo call relationships found.", retrieved_chunks
 
 	print(context)
 	answer = generate_answer(query=query, context=context, chunks=retrieved_chunks)
