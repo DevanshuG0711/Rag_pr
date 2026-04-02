@@ -11,6 +11,9 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [indexingRepo, setIndexingRepo] = useState(false);
+  const [repoStatus, setRepoStatus] = useState("");
 
   const answerText = response?.answer || "";
   const flowHeader = "Flow Explanation:";
@@ -56,12 +59,12 @@ function App() {
   const handleFileSelection = (file) => {
     if (!file) return;
 
-    const allowedExtensions = [".py", ".txt", ".pdf"];
+    const allowedExtensions = [".py", ".txt", ".go", ".js", ".ts"];
     const lowerName = file.name.toLowerCase();
     const isAllowed = allowedExtensions.some((ext) => lowerName.endsWith(ext));
 
     if (!isAllowed) {
-      setUploadStatus("Please select a .py, .txt, or .pdf file.");
+      setUploadStatus("Please select a .py, .txt, .go, .js, or .ts file.");
       setSelectedFile(null);
       return;
     }
@@ -110,6 +113,33 @@ function App() {
       alert("Error fetching response");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleIndexRepo = async () => {
+    const trimmedRepoUrl = repoUrl.trim();
+
+    if (!trimmedRepoUrl || indexingRepo) return;
+
+    if (!/^https?:\/\//i.test(trimmedRepoUrl)) {
+      setRepoStatus("Please enter a valid repository URL starting with http or https.");
+      return;
+    }
+
+    try {
+      setIndexingRepo(true);
+      setRepoStatus("");
+
+      await axios.post("http://127.0.0.1:8000/api/index_repo", {
+        repo_url: trimmedRepoUrl,
+      });
+
+      setRepoStatus("Repository indexed successfully.");
+    } catch (err) {
+      console.error(err);
+      setRepoStatus("Failed to index repository. Please try again.");
+    } finally {
+      setIndexingRepo(false);
     }
   };
 
@@ -169,14 +199,14 @@ function App() {
               }`}
             >
               <p className="text-sm text-slate-200">Drag and drop a file here, or select one</p>
-              <p className="mt-1 text-xs text-slate-400">Supported: .py, .txt, .pdf</p>
+              <p className="mt-1 text-xs text-slate-400">Supported: .py, .txt, .go, .js, .ts</p>
 
               <div className="mt-4 flex flex-col items-center justify-center gap-3 sm:flex-row">
                 <label className="cursor-pointer rounded-lg border border-white/20 bg-slate-800/70 px-3 py-2 text-xs text-slate-200 transition hover:bg-slate-700/70">
                   Choose File
                   <input
                     type="file"
-                    accept=".py,.txt,.pdf"
+                    accept=".py,.txt,.go,.js,.ts"
                     onChange={(e) => handleFileSelection(e.target.files?.[0])}
                     className="hidden"
                   />
@@ -207,6 +237,38 @@ function App() {
                 </p>
               )}
             </div>
+          </div>
+
+          {/* Repository Index Section */}
+          <div className="mx-auto mb-5 w-full max-w-2xl rounded-xl border border-white/10 bg-slate-900/55 p-4 shadow-[0_10px_24px_rgba(0,0,0,0.24)] md:mb-6 md:p-5">
+            <h2 className="mb-3 text-sm font-semibold text-slate-200">Index GitHub Repository</h2>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <input
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+                placeholder="https://github.com/owner/repo"
+                className="w-full rounded-xl border border-white/15 bg-slate-900/70 px-4 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-400 focus:border-cyan-300/45 focus:ring-4 focus:ring-cyan-400/25"
+              />
+              <button
+                onClick={handleIndexRepo}
+                disabled={indexingRepo || !repoUrl.trim()}
+                className="rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                {indexingRepo ? "Indexing..." : "Index Repo"}
+              </button>
+            </div>
+
+            {repoStatus && (
+              <p
+                className={`mt-3 text-xs ${
+                  repoStatus.toLowerCase().includes("success")
+                    ? "text-emerald-300"
+                    : "text-rose-300"
+                }`}
+              >
+                {repoStatus}
+              </p>
+            )}
           </div>
 
           {/* Input Section */}

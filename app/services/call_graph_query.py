@@ -124,3 +124,32 @@ def get_call_graph_for_file(file_name: str) -> dict[str, list[str]]:
         graph[str(function_name)] = [str(name) for name in (called_functions or [])]
 
     return graph
+
+
+def get_all_call_graph() -> dict[str, list[str]]:
+    dsn = os.getenv("POSTGRES_DSN") or ""
+    if not dsn:
+        return {}
+
+    graph: dict[str, list[str]] = {}
+
+    with psycopg2.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT function_name, called_functions
+                FROM call_graph
+                """
+            )
+            rows = cur.fetchall()
+
+    for function_name, called_functions in rows:
+        key = str(function_name)
+        existing = graph.get(key, [])
+        for name in called_functions or []:
+            callee = str(name)
+            if callee not in existing:
+                existing.append(callee)
+        graph[key] = existing
+
+    return graph

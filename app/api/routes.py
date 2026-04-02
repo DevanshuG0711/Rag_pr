@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import tempfile
 
 from fastapi import APIRouter
 from fastapi import File
@@ -24,6 +26,7 @@ from app.services.vector_store import store_chunk_embeddings
 router = APIRouter(prefix="/api")
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+SUPPORTED_REPO_EXTENSIONS = {".py", ".js", ".ts", ".go"}
 
 
 @router.post("/ingest")
@@ -108,6 +111,108 @@ async def ingest_document(
 		"call_graph_rows_upserted": call_graph_rows_upserted,
 		"text": text,
 	}
+
+
+@router.post("/index_repo")
+def index_repository(payload: dict[str, str]) -> dict[str, str]:
+	repo_url = str(payload.get("repo_url") or "").strip()
+	if not repo_url:
+		raise HTTPException(status_code=400, detail="repo_url must not be empty")
+	if not repo_url.startswith(("http://", "https://")):
+		raise HTTPException(status_code=400, detail="Invalid repository URL")
+
+	try:
+		with tempfile.TemporaryDirectory(prefix="repo_index_") as tmp_dir:
+			repo_dir = Path(tmp_dir) / "repo"
+			clone_result = subprocess.run(
+				["git", "clone", "--depth", "1", repo_url, str(repo_dir)],
+				capture_output=True,
+				text=True,
+				check=False,
+			)
+
+			if clone_result.returncode != 0:
+				error_text = (clone_result.stderr or clone_result.stdout or "").strip()
+				raise HTTPException(
+					status_code=400,
+					detail=f"Failed to clone repository: {error_text or 'git clone failed'}",
+				)
+
+			source_files = [
+				path
+				for path in repo_dir.rglob("*")
+				if path.is_file() and path.suffix.lower() in SUPPORTED_REPO_EXTENSIONS
+			]
+
+			for file_path in source_files:
+				relative_name = str(file_path.relative_to(repo_dir))
+				try:
+					file_bytes = file_path.read_bytes()
+					try:
+						text = file_bytes.decode("utf-8")
+					except UnicodeDecodeError:
+						text = file_bytes.decode("latin-1")
+				except Exception as exc:
+					raise HTTPException(
+						status_code=500,
+						detail=f"Failed to read file during indexing: {relative_name}",
+					) from exc
+
+				chunk_metadata: list[dict[str, object]] = []
+				call_graph: dict[str, list[str]] = {}
+				lowered = file_path.suffix.lower()
+
+				if lowered == ".py":
+					chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+						code=text,
+						file_name=relative_name,
+					)
+				else:
+					chunks, chunk_metadata = extract_code_chunks(
+						code=text,
+						file_name=relative_name,
+					)
+					if not chunks:
+						chunks = chunk_text(text=text, chunk_size=500, overlap=50)
+
+				if not chunks:
+					continue
+
+				try:
+					embeddings = generate_embeddings(chunks=chunks)
+				except Exception as exc:
+					raise HTTPException(
+						status_code=500,
+						detail=f"Failed to generate embeddings for {relative_name}",
+					) from exc
+
+				if call_graph:
+					try:
+						upsert_call_graph(file_name=relative_name, call_graph=call_graph)
+					except Exception as exc:
+						raise HTTPException(
+							status_code=500,
+							detail=f"Failed to store call graph for {relative_name}",
+						) from exc
+
+				try:
+					store_chunk_embeddings(
+						file_name=relative_name,
+						chunks=chunks,
+						embeddings=embeddings,
+						chunk_metadata=chunk_metadata if chunk_metadata else None,
+					)
+				except Exception as exc:
+					raise HTTPException(
+						status_code=500,
+						detail=f"Failed to store vectors for {relative_name}",
+					) from exc
+	except HTTPException:
+		raise
+	except Exception as exc:
+		raise HTTPException(status_code=500, detail="Repository indexing failed") from exc
+
+	return {"message": "Repository indexed successfully"}
 
 
 @router.get("/search")

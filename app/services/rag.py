@@ -12,6 +12,7 @@ from app.services.call_graph_query import build_graph
 from app.services.call_graph_query import expand_with_graph
 from app.services.call_graph_query import get_callees
 from app.services.call_graph_query import get_callers
+from app.services.call_graph_query import get_all_call_graph
 from app.services.call_graph_query import get_call_graph_for_file
 from app.services.hybrid_search import hybrid_search
 from app.services.query_classifier import classify_query
@@ -94,6 +95,23 @@ def _extract_caller_query_target(query: str) -> str:
 	patterns = [
 		r"\bwho calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
 		r"\bwhich function calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+	]
+
+	for pattern in patterns:
+		match = re.search(pattern, normalized_query)
+		if match:
+			return match.group(1)
+
+	return ""
+
+
+def _extract_usage_query_target(query: str) -> str:
+	normalized_query = _normalize_query_for_intent(query)
+
+	patterns = [
+		r"\bwho calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bwhich function calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bwhat does\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+calls?\b",
 	]
 
 	for pattern in patterns:
@@ -475,48 +493,6 @@ def _generate_with_ollama(query: str, context: str) -> str:
 	return final_text
 
 
-# def _generate_local_answer(query: str, chunks: list[dict[str, object]]) -> str:
-# 	if not chunks:
-# 		return "I could not find relevant context to answer this question."
-
-# 	top_chunk_text = str(chunks[0].get("chunk_text") or "")
-# 	return (
-# 		"Local fallback answer (no OpenAI key configured). "
-# 		f"Best matching context says: {top_chunk_text}"
-# 	)
-
-## Improved local answer generation without LLM, using simple keyword matching and sentence extraction. #
-
-# def _generate_local_answer(query: str, chunks: List[Dict[str, object]]) -> str:
-#     if not chunks:
-#         return "I could not find relevant context."
-
-#     import re
-
-#     def clean_words(text):
-#         return set(re.findall(r'\b\w+\b', text.lower()))
-
-#     top_chunks = chunks[:3]
-#     combined_text = " ".join(str(c.get("chunk_text") or "") for c in top_chunks)
-
-#     # FIXED split
-#     sentences = re.split(r'(?<=[.!?])\s+', combined_text.strip())
-
-#     query_words = clean_words(query)
-
-#     def score(sentence):
-#         return len(clean_words(sentence) & query_words)
-
-#     ranked = sorted(sentences, key=score, reverse=True)
-
-#     best = [s for s in ranked if score(s) > 0][:1]
-	
-#     if not best:
-#         best = sentences[:1]
-
-#     return "Local Answer: " + " ".join(best)
-
-# The above function tries to extract the most relevant sentences from the top 3 chunks based on keyword overlap with the query. This is a simple heuristic that can provide a more informative answer than just taking the top chunk's text.
 
 ## Further improved local answer generation with flow detection and explanation. #
 def _generate_local_answer(
@@ -596,67 +572,61 @@ def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -
 
 
 def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, object]]]:
+	query_type = classify_query(query)
+
+	if query_type == "find_usage":
+		target = _extract_usage_query_target(query)
+		if not target:
+			return "No target function found in query.", []
+
+		graph = get_all_call_graph()
+		if not graph:
+			return "No call graph data available.", []
+
+		build_graph(graph)
+		normalized_query = _normalize_query_for_intent(query)
+		if re.search(r"\bwhat does\b", normalized_query):
+			callees = get_callees(target)
+			if not callees:
+				return f"No callees found for {target}.", []
+			return "\n".join(f"{target} calls {callee}" for callee in callees), []
+
+		callers = get_callers(target)
+		if not callers:
+			return f"No callers found for {target}.", []
+		return "\n".join(f"{caller} calls {target}" for caller in callers), []
+
+	if query_type == "flow":
+		graph = get_all_call_graph()
+		if not graph:
+			return "Flow:\nNo call graph data available.", []
+
+		build_graph(graph)
+		normalized_query = _normalize_query_for_intent(query)
+		seeds = [name for name in graph if re.search(rf"\b{re.escape(name.lower())}\b", normalized_query)]
+		expanded = expand_with_graph(seeds if seeds else list(graph.keys()), max_depth=2)
+		expanded_set = set(expanded)
+
+		lines = ["Flow:"]
+		for caller, callees in graph.items():
+			if caller not in expanded_set:
+				continue
+			for callee in callees:
+				if callee in expanded_set:
+					lines.append(f"{caller} calls {callee}")
+
+		if len(lines) == 1:
+			return "Flow:\nNo call relationships found.", []
+		return "\n".join(lines), []
+
 	retrieved_chunks = retrieve_relevant_chunks(query=query, top_k=top_k)
 	retrieved_chunks = _expand_chunks_with_call_graph(query=query, retrieved_chunks=retrieved_chunks, max_depth=1)
 	context = build_context(retrieved_chunks)
-	graph_mode = _detect_graph_query_mode(query)
-	force_graph = _is_graph_forced_query(query)
-	graph_context = ""
 
-	if graph_mode != "none":
-		db_graph: dict[str, list[str]] = {}
-		file_names = list(
-			dict.fromkeys(
-				str(chunk.get("file_name") or "").strip()
-				for chunk in retrieved_chunks
-				if str(chunk.get("file_name") or "").strip()
-			)
-		)
+	if query_type == "search":
+		answer = _generate_local_answer(query=query, context=context, chunks=retrieved_chunks)
+		return answer, retrieved_chunks
 
-		for file_name in file_names:
-			try:
-				file_graph = get_call_graph_for_file(file_name=file_name)
-			except Exception:
-				file_graph = {}
-
-			for func_name, callees in file_graph.items():
-				existing = db_graph.get(func_name, [])
-				for callee in callees:
-					if callee not in existing:
-						existing.append(callee)
-				db_graph[func_name] = existing
-
-		if not db_graph:
-			db_graph = {}
-			for chunk in retrieved_chunks[:5]:
-				chunk_text = str(chunk.get("chunk_text") or "")
-				if not chunk_text.strip():
-					continue
-				try:
-					chunk_graph = extract_call_graph(chunk_text)
-				except Exception:
-					continue
-				for func, called_funcs in chunk_graph.items():
-					existing = db_graph.get(func, [])
-					for called in called_funcs:
-						if called not in existing:
-							existing.append(called)
-					db_graph[func] = existing
-
-		graph_context = _build_query_aware_graph_context(
-			query=query,
-			graph=db_graph,
-			retrieved_chunks=retrieved_chunks,
-		)
-
-		if graph_context:
-			context = f"{context}\n\n{graph_context}" if context else graph_context
-
-	if force_graph:
-		if graph_context:
-			return graph_context, retrieved_chunks
-		return "Flow:\nNo call relationships found.", retrieved_chunks
-
-	print(context)
+	# explain
 	answer = generate_answer(query=query, context=context, chunks=retrieved_chunks)
 	return answer, retrieved_chunks
