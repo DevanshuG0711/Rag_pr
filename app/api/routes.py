@@ -10,6 +10,7 @@ from app.services.chunking import chunk_text
 from app.services.embeddings import DEFAULT_EMBEDDING_MODEL
 from app.services.embeddings import embedding_dimension
 from app.services.embeddings import generate_embeddings
+from app.services.ingest import extract_code_chunks
 from app.services.ingest import extract_text
 from app.services.ingest import extract_python_chunks_and_graph
 from app.services.call_graph_store import upsert_call_graph
@@ -44,12 +45,20 @@ async def ingest_document(
 		text = extract_text(file_name=file_name, file_bytes=file_bytes)
 		chunk_metadata: list[dict[str, object]] = []
 		call_graph: dict[str, list[str]] = {}
+		lowered = file_name.lower()
 
-		if file_name.lower().endswith(".py"):
+		if lowered.endswith(".py"):
 			chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
 				code=text,
 				file_name=file_name,
 			)
+		elif lowered.endswith((".js", ".ts", ".go")):
+			chunks, chunk_metadata = extract_code_chunks(
+				code=text,
+				file_name=file_name,
+			)
+			if not chunks:
+				chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
 		else:
 			chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
 	except ValueError as exc:

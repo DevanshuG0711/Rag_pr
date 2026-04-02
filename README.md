@@ -418,6 +418,72 @@ validate_user calls db_check
 
 ---
 
+## 🔍 Why AST-Based Chunking Beats Naive Chunking
+
+### ❌ Problem with Naive Chunking
+
+Traditional RAG systems split code using fixed-size chunks (e.g., 50 lines).  
+This approach treats code as plain text and ignores its structure.
+
+Issues:
+- Breaks functions across chunks
+- Loses logical boundaries
+- Retrieval often returns incomplete or irrelevant code
+
+Example (Naive Chunking):
+Chunk 1:
+-def login():
+-validate_user()
+
+Chunk 2:
+-create_session()
+
+Here, the function is split incorrectly, leading to poor understanding.
+
+---
+
+### ✅ Our Approach: AST-Based Chunking
+
+We use **tree-sitter** to parse code into an Abstract Syntax Tree (AST).  
+Each function or class is extracted as a complete, self-contained chunk.
+
+Benefits:
+- Preserves function/class boundaries
+- Maintains structural integrity
+- Enables precise and meaningful retrieval
+
+Example (AST Chunking):
+def login():
+validate_user()
+create_session()
+
+---
+
+### 📊 Comparison
+
+| Feature | Naive Chunking | AST Chunking |
+|--------|---------------|-------------|
+| Structure Awareness | ❌ No | ✅ Yes |
+| Function Boundaries | ❌ Broken | ✅ Preserved |
+| Retrieval Accuracy | Low | High |
+| Code Understanding | Weak | Strong |
+
+---
+
+### 📈 Results
+
+In our evaluation, AST-based chunking significantly improved retrieval accuracy compared to naive chunking.
+
+This demonstrates that understanding code structure is critical for building reliable code intelligence systems.
+
+---
+
+### 🧠 Key Insight
+
+Code is not plain text — it is structured logic.
+
+By leveraging AST parsing, this system moves beyond basic RAG and enables **true code understanding**.
+
 ## 🚀 Setup
 
 python3 -m venv .venv  
