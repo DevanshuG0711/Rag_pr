@@ -16,6 +16,9 @@ from app.services.call_graph_query import get_all_call_graph
 from app.services.call_graph_query import get_call_graph_for_file
 from app.services.hybrid_search import hybrid_search
 from app.services.query_classifier import classify_query
+from app.services.embeddings import generate_embeddings
+from app.services.vector_store import fetch_all_chunks_by_file
+from app.services.vector_store import search_similar_chunks_by_file
 from app.services.vector_store import fetch_chunks_by_function_names
 
 
@@ -122,7 +125,39 @@ def _extract_usage_query_target(query: str) -> str:
 	return ""
 
 
-def retrieve_relevant_chunks(query: str, top_k: int = 5) -> list[dict[str, object]]:
+def _is_whole_file_query(query: str) -> bool:
+	normalized = _normalize_query_for_intent(query)
+	return any(
+		phrase in normalized
+		for phrase in (
+			"explain whole code",
+			"explain this file",
+			"what does this file do",
+		)
+	)
+
+
+def retrieve_relevant_chunks(
+	query: str,
+	top_k: int = 5,
+	file_name: str | None = None,
+	mode: str = "global",
+) -> list[dict[str, object]]:
+	if mode == "file_only":
+		normalized_file_name = str(file_name or "").strip()
+		if not normalized_file_name:
+			return []
+
+		if _is_whole_file_query(query):
+			return fetch_all_chunks_by_file(normalized_file_name)
+
+		query_embedding = generate_embeddings(chunks=[query])[0]
+		return search_similar_chunks_by_file(
+			query_embedding=query_embedding,
+			file_name=normalized_file_name,
+			top_k=max(1, top_k),
+		)
+
 	query_type = classify_query(query)
 
 	if query_type == "explain":
@@ -167,6 +202,8 @@ def _expand_chunks_with_call_graph(
 	query: str,
 	retrieved_chunks: list[dict[str, object]],
 	max_depth: int = 1,
+	mode: str = "global",
+	file_name: str | None = None,
 ) -> list[dict[str, object]]:
 	if not retrieved_chunks:
 		return []
@@ -184,9 +221,9 @@ def _expand_chunks_with_call_graph(
 	)
 
 	merged_graph: dict[str, list[str]] = {}
-	for file_name in file_names:
+	for chunk_file_name in file_names:
 		try:
-			graph = get_call_graph_for_file(file_name=file_name)
+			graph = get_call_graph_for_file(file_name=chunk_file_name)
 		except Exception:
 			graph = {}
 
@@ -248,12 +285,21 @@ def _expand_chunks_with_call_graph(
 		if name not in fetched_function_names
 	]
 
-	if missing_function_names:
+	if missing_function_names and mode == "global":
 		fallback_chunks = fetch_chunks_by_function_names(
 			function_names=missing_function_names,
 			file_names=None,
 		)
 		expanded_chunks = _merge_dedup_chunks(expanded_chunks, fallback_chunks)
+
+	if mode == "file_only":
+		normalized_file_name = str(file_name or "").strip()
+		if normalized_file_name:
+			expanded_chunks = [
+				chunk
+				for chunk in expanded_chunks
+				if str(chunk.get("file_name") or "").strip() == normalized_file_name
+			]
 
 	return _merge_dedup_chunks(retrieved_chunks, expanded_chunks)
 
@@ -404,6 +450,151 @@ def _build_flow_from_db(graph: dict[str, list[str]]) -> str:
 		return ""
 
 	return "\n".join(lines)
+
+
+def _extract_flow_edges(graph_lines: list[str]) -> list[tuple[str, str]]:
+	edges: list[tuple[str, str]] = []
+	for raw_line in graph_lines:
+		line = str(raw_line).strip()
+		if not line:
+			continue
+
+		match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s+calls\s+(.+)$", line)
+		if not match:
+			continue
+
+		caller = match.group(1).strip()
+		callees_part = match.group(2).strip()
+		callees = [name.strip() for name in callees_part.split(",") if name.strip()]
+		for callee in callees:
+			edges.append((caller, callee))
+
+	# Keep insertion order and remove duplicates.
+	return list(dict.fromkeys(edges))
+
+
+def _generate_flow_explanation_rule_based(graph_lines: list[str]) -> str:
+	edges = _extract_flow_edges(graph_lines)
+	if not edges:
+		return "No call relationships found."
+
+	adjacency: dict[str, list[str]] = {}
+	indegree: dict[str, int] = {}
+	for caller, callee in edges:
+		adjacency.setdefault(caller, []).append(callee)
+		indegree.setdefault(caller, 0)
+		indegree[callee] = indegree.get(callee, 0) + 1
+
+	starts = [node for node in adjacency if indegree.get(node, 0) == 0]
+	if not starts:
+		starts = [edges[0][0]]
+
+	seen_edges: set[tuple[str, str]] = set()
+	chains: list[list[str]] = []
+
+	def build_chain(start: str) -> list[str]:
+		chain = [start]
+		current = start
+		while True:
+			options = [
+				nxt
+				for nxt in adjacency.get(current, [])
+				if (current, nxt) not in seen_edges
+			]
+			if not options:
+				break
+
+			nxt = options[0]
+			seen_edges.add((current, nxt))
+			chain.append(nxt)
+			current = nxt
+
+			# Stop chain on branch points to keep text concise and readable.
+			remaining = [
+				c for c in adjacency.get(current, []) if (current, c) not in seen_edges
+			]
+			if len(remaining) > 1:
+				break
+
+		return chain
+
+	for start in starts:
+		if len(chains) >= 3:
+			break
+		chain = build_chain(start)
+		if len(chain) >= 2:
+			chains.append(chain)
+
+	# Cover remaining unseen edges as short statements.
+	for caller, callee in edges:
+		if len(chains) >= 5:
+			break
+		if (caller, callee) in seen_edges:
+			continue
+		seen_edges.add((caller, callee))
+		chains.append([caller, callee])
+
+	sentences: list[str] = []
+	for chain in chains[:5]:
+		if len(chain) == 2:
+			sentences.append(f"The {chain[0]} function calls {chain[1]}.")
+			continue
+
+		base = f"The {chain[0]} function calls {chain[1]}"
+		for node in chain[2:]:
+			base += f", which further calls {node}"
+		sentences.append(base + ".")
+
+	if not sentences:
+		return "No call relationships found."
+
+	return "\n".join(sentences[:5])
+
+
+def generate_flow_explanation(graph_lines: list[str]) -> str:
+	edges = _extract_flow_edges(graph_lines)
+	if not edges:
+		return "No call relationships found."
+
+	if _is_ollama_available():
+		try:
+			url = f"{OLLAMA_BASE_URL}/api/generate"
+			flow_text = "\n".join(f"{caller} calls {callee}" for caller, callee in edges)
+			prompt = (
+				"You are a code assistant. Convert function-call edges into a concise, human-readable explanation.\n"
+				"Rules:\n"
+				"- Return only explanation text.\n"
+				"- Use simple English.\n"
+				"- Merge connected steps and avoid repetition.\n"
+				"- Keep output concise: 3 to 5 lines maximum.\n\n"
+				"Edges:\n"
+				f"{flow_text}\n"
+			)
+
+			payload = {
+				"model": OLLAMA_MODEL,
+				"prompt": prompt,
+				"stream": False,
+			}
+			data = json.dumps(payload).encode("utf-8")
+			req = urllib_request.Request(
+				url,
+				data=data,
+				headers={"Content-Type": "application/json"},
+				method="POST",
+			)
+
+			with urllib_request.urlopen(req, timeout=20.0) as response:
+				if response.status == 200:
+					body = json.loads(response.read().decode("utf-8"))
+					text = str(body.get("response") or "").strip()
+					if text:
+						lines = [line.strip() for line in text.splitlines() if line.strip()]
+						return "\n".join(lines[:5])
+		except Exception:
+			pass
+
+	return _generate_flow_explanation_rule_based([f"{caller} calls {callee}" for caller, callee in edges])
 
 
 def _generate_with_openai(query: str, context: str) -> str:
@@ -571,15 +762,25 @@ def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -
 	return _generate_local_answer(query=query, context=context, chunks=chunks)
 
 
-def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, object]]]:
+def run_rag_pipeline(
+	query: str,
+	top_k: int = 5,
+	mode: str = "global",
+	file_name: str | None = None,
+) -> tuple[str, list[dict[str, object]]]:
 	query_type = classify_query(query)
+	effective_mode = "file_only" if mode == "file_only" and str(file_name or "").strip() else "global"
+	normalized_file_name = str(file_name or "").strip() or None
 
 	if query_type == "find_usage":
 		target = _extract_usage_query_target(query)
 		if not target:
 			return "No target function found in query.", []
 
-		graph = get_all_call_graph()
+		if effective_mode == "file_only" and normalized_file_name:
+			graph = get_call_graph_for_file(file_name=normalized_file_name)
+		else:
+			graph = get_all_call_graph()
 		if not graph:
 			return "No call graph data available.", []
 
@@ -597,9 +798,12 @@ def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, ob
 		return "\n".join(f"{caller} calls {target}" for caller in callers), []
 
 	if query_type == "flow":
-		graph = get_all_call_graph()
+		if effective_mode == "file_only" and normalized_file_name:
+			graph = get_call_graph_for_file(file_name=normalized_file_name)
+		else:
+			graph = get_all_call_graph()
 		if not graph:
-			return "Flow:\nNo call graph data available.", []
+			return "No call graph data available.", []
 
 		build_graph(graph)
 		normalized_query = _normalize_query_for_intent(query)
@@ -607,7 +811,7 @@ def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, ob
 		expanded = expand_with_graph(seeds if seeds else list(graph.keys()), max_depth=2)
 		expanded_set = set(expanded)
 
-		lines = ["Flow:"]
+		lines: list[str] = []
 		for caller, callees in graph.items():
 			if caller not in expanded_set:
 				continue
@@ -615,12 +819,24 @@ def run_rag_pipeline(query: str, top_k: int = 5) -> tuple[str, list[dict[str, ob
 				if callee in expanded_set:
 					lines.append(f"{caller} calls {callee}")
 
-		if len(lines) == 1:
-			return "Flow:\nNo call relationships found.", []
-		return "\n".join(lines), []
+		if not lines:
+			return "No call relationships found.", []
 
-	retrieved_chunks = retrieve_relevant_chunks(query=query, top_k=top_k)
-	retrieved_chunks = _expand_chunks_with_call_graph(query=query, retrieved_chunks=retrieved_chunks, max_depth=1)
+		return generate_flow_explanation(lines), []
+
+	retrieved_chunks = retrieve_relevant_chunks(
+		query=query,
+		top_k=top_k,
+		mode=effective_mode,
+		file_name=normalized_file_name,
+	)
+	retrieved_chunks = _expand_chunks_with_call_graph(
+		query=query,
+		retrieved_chunks=retrieved_chunks,
+		max_depth=1,
+		mode=effective_mode,
+		file_name=normalized_file_name,
+	)
 	context = build_context(retrieved_chunks)
 
 	if query_type == "search":

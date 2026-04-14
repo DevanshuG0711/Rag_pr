@@ -234,3 +234,135 @@ def fetch_chunks_by_function_names(
 				)
 
 	return results
+
+
+def _point_to_result(point: object, score: float = 0.0) -> dict[str, object]:
+	payload = getattr(point, "payload", None) or {}
+	return {
+		"id": str(getattr(point, "id")),
+		"score": float(score),
+		"file_name": payload.get("file_name"),
+		"chunk_index": payload.get("chunk_index"),
+		"chunk_text": payload.get("chunk_text"),
+		"name": payload.get("name"),
+		"type": payload.get("type"),
+		"start_line": payload.get("start_line"),
+		"end_line": payload.get("end_line"),
+		"docstring": payload.get("docstring") or "",
+		"imports": payload.get("imports", []),
+	}
+
+
+def fetch_chunks_by_file(
+	file_name: str,
+	limit: int = 10,
+	collection_name: str = COLLECTION_NAME,
+) -> list[dict[str, object]]:
+	if not file_name.strip() or limit <= 0:
+		return []
+
+	client = get_qdrant_client()
+	if not client.collection_exists(collection_name=collection_name):
+		return []
+
+	points, _ = client.scroll(
+		collection_name=collection_name,
+		scroll_filter=Filter(
+			must=[
+				FieldCondition(key="file_name", match=MatchValue(value=file_name)),
+			]
+		),
+		limit=limit,
+		with_payload=True,
+	)
+
+	results = [_point_to_result(point) for point in points]
+	results.sort(key=lambda item: int(item.get("chunk_index") or 0))
+	return results
+
+
+def fetch_all_chunks_by_file(
+	file_name: str,
+	collection_name: str = COLLECTION_NAME,
+) -> list[dict[str, object]]:
+	if not file_name.strip():
+		return []
+
+	client = get_qdrant_client()
+	if not client.collection_exists(collection_name=collection_name):
+		return []
+
+	all_points: list[object] = []
+	offset = None
+
+	while True:
+		points, offset = client.scroll(
+			collection_name=collection_name,
+			scroll_filter=Filter(
+				must=[
+					FieldCondition(key="file_name", match=MatchValue(value=file_name)),
+				]
+			),
+			limit=256,
+			with_payload=True,
+			offset=offset,
+		)
+
+		if not points:
+			break
+
+		all_points.extend(points)
+		if offset is None:
+			break
+
+	results = [_point_to_result(point) for point in all_points]
+	results.sort(key=lambda item: int(item.get("chunk_index") or 0))
+	return results
+
+
+def search_similar_chunks_by_file(
+	query_embedding: list[float],
+	file_name: str,
+	top_k: int = 5,
+	collection_name: str = COLLECTION_NAME,
+) -> list[dict[str, object]]:
+	if top_k <= 0:
+		raise ValueError("top_k must be greater than 0")
+	if not file_name.strip():
+		return []
+
+	client = get_qdrant_client()
+	if not client.collection_exists(collection_name=collection_name):
+		return []
+
+	hits = client.search(
+		collection_name=collection_name,
+		query_vector=query_embedding,
+		query_filter=Filter(
+			must=[
+				FieldCondition(key="file_name", match=MatchValue(value=file_name)),
+			]
+		),
+		limit=top_k,
+		with_payload=True,
+	)
+
+	results: list[dict[str, object]] = []
+	for hit in hits:
+		results.append(
+			{
+				"id": str(hit.id),
+				"score": float(hit.score),
+				"file_name": (hit.payload or {}).get("file_name"),
+				"chunk_index": (hit.payload or {}).get("chunk_index"),
+				"chunk_text": (hit.payload or {}).get("chunk_text"),
+				"name": (hit.payload or {}).get("name"),
+				"type": (hit.payload or {}).get("type"),
+				"start_line": (hit.payload or {}).get("start_line"),
+				"end_line": (hit.payload or {}).get("end_line"),
+				"docstring": (hit.payload or {}).get("docstring") or "",
+				"imports": (hit.payload or {}).get("imports", []),
+			}
+		)
+
+	return results

@@ -19,6 +19,10 @@ from app.services.call_graph_store import upsert_call_graph
 from app.models.schemas import QueryRequest
 from app.models.schemas import QueryResponse
 from app.services.rag import run_rag_pipeline
+from app.services.context_state import get_context_mode
+from app.services.context_state import get_uploaded_file_name
+from app.services.context_state import set_repo_indexed
+from app.services.context_state import set_uploaded_file
 from app.services.vector_store import COLLECTION_NAME
 from app.services.vector_store import search_similar_chunks
 from app.services.vector_store import store_chunk_embeddings
@@ -91,6 +95,8 @@ async def ingest_document(
 		)
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail="Failed to store vectors") from exc
+
+	set_uploaded_file(file_name)
 
 	return {
 		"filename": file_name,
@@ -212,7 +218,10 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail="Repository indexing failed") from exc
 
+	set_repo_indexed(True)
 	return {"message": "Repository indexed successfully"}
+
+
 
 
 @router.get("/search")
@@ -246,6 +255,8 @@ def query_rag(payload: QueryRequest) -> QueryResponse:
 		answer, retrieved_chunks = run_rag_pipeline(
 			query=payload.query,
 			top_k=payload.top_k,
+			mode=get_context_mode(),
+			file_name=get_uploaded_file_name(),
 		)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
