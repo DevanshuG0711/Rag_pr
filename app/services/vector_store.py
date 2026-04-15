@@ -315,7 +315,33 @@ def fetch_all_chunks_by_file(
 		if offset is None:
 			break
 
-	results = [_point_to_result(point) for point in all_points]
+	results: list[dict[str, object]] = []
+
+	for point in all_points:
+		payload = (getattr(point, "payload", None) or {})
+		metadata: dict[str, object] = {}
+
+		for key in ("name", "type", "start_line", "end_line", "docstring", "imports"):
+			value = payload.get(key)
+			if value is None:
+				continue
+			if key == "docstring" and not value:
+				continue
+			if key == "imports" and not value:
+				continue
+			metadata[key] = value
+
+		results.append(
+			{
+				"id": str(getattr(point, "id")),
+				"score": 0.0,
+				"file_name": payload.get("file_name"),
+				"chunk_text": payload.get("chunk_text"),
+				"chunk_index": payload.get("chunk_index"),
+				"metadata": metadata,
+			}
+		)
+
 	results.sort(key=lambda item: int(item.get("chunk_index") or 0))
 	return results
 

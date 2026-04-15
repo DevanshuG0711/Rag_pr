@@ -765,9 +765,17 @@ def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -
 def run_rag_pipeline(
 	query: str,
 	top_k: int = 5,
-	mode: str = "global",
 	file_name: str | None = None,
+	repo_indexed: bool = False,
 ) -> tuple[str, list[dict[str, object]]]:
+	if str(file_name or "").strip():
+		mode = "file_only"
+	else:
+		mode = "global"
+
+	print("MODE:", mode)
+	print("FILE:", file_name)
+
 	query_type = classify_query(query)
 	effective_mode = "file_only" if mode == "file_only" and str(file_name or "").strip() else "global"
 	normalized_file_name = str(file_name or "").strip() or None

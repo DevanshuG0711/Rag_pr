@@ -1,15 +1,15 @@
-def login():
-    validate_user()
-    create_session()
+# def login():
+#     validate_user()
+#     create_session()
 
-def validate_user():
-    db_check()
+# def validate_user():
+#     db_check()
 
-def db_check():
-    pass
+# def db_check():
+#     pass
 
-def create_session():
-    pass
+# def create_session():
+#     pass
 
 
 
@@ -33,3 +33,24 @@ def create_session():
 # expanded = expand_with_graph(["login"], max_depth=1)
 # print(expand_with_graph(["unknown"], max_depth=2))
 # print("Expanded:", expanded)
+
+
+# chunks = fetch_all_chunks_by_file("main.py")
+
+# print(len(chunks))
+# for c in chunks:
+#     print(c["file_name"])
+
+
+from app.services.vector_store import fetch_all_chunks_by_file
+
+
+file_name = "main.py"
+
+chunks = fetch_all_chunks_by_file(file_name)
+
+print("Total chunks:", len(chunks))
+print("\nFiles found:\n")
+
+for c in chunks:
+    print(c.get("file_name"))

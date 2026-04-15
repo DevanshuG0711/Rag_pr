@@ -19,8 +19,8 @@ from app.services.call_graph_store import upsert_call_graph
 from app.models.schemas import QueryRequest
 from app.models.schemas import QueryResponse
 from app.services.rag import run_rag_pipeline
-from app.services.context_state import get_context_mode
 from app.services.context_state import get_uploaded_file_name
+from app.services.context_state import is_repo_indexed
 from app.services.context_state import set_repo_indexed
 from app.services.context_state import set_uploaded_file
 from app.services.vector_store import COLLECTION_NAME
@@ -97,6 +97,7 @@ async def ingest_document(
 		raise HTTPException(status_code=500, detail="Failed to store vectors") from exc
 
 	set_uploaded_file(file_name)
+	set_repo_indexed(False)
 
 	return {
 		"filename": file_name,
@@ -255,8 +256,8 @@ def query_rag(payload: QueryRequest) -> QueryResponse:
 		answer, retrieved_chunks = run_rag_pipeline(
 			query=payload.query,
 			top_k=payload.top_k,
-			mode=get_context_mode(),
 			file_name=get_uploaded_file_name(),
+			repo_indexed=is_repo_indexed(),
 		)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
