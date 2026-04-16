@@ -17,11 +17,11 @@ from app.services.rag import retrieve_relevant_chunks
 def load_golden_data() -> list[dict[str, str]]:
     """Load golden examples from eval/golden_set.json.
 
-    Falls back to eval/goldenset.json for compatibility with existing files.
+    Falls back to eval/newgoldenset.json for compatibility with existing files.
     """
     eval_dir = Path(__file__).parent
     primary_path = eval_dir / "golden_set.json"
-    fallback_path = eval_dir / "goldenset.json"
+    fallback_path = eval_dir / "newgoldenset.json"
 
     dataset_path = primary_path if primary_path.exists() else fallback_path
 
