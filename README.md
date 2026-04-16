@@ -248,7 +248,7 @@ In our evaluation, AST-based chunking significantly improved retrieval accuracy 
 
 This demonstrates that understanding code structure is critical for building reliable code intelligence systems.
 
-### ✅ Golden Set Evaluation (File Hit Rate@3)
+## ✅ Golden Set Evaluation (File Hit Rate@3)
 
 We evaluate retrieval quality using a golden dataset and report **file hit rate@3**.
 
@@ -267,7 +267,7 @@ Notes:
 - The evaluator uses `run_rag_pipeline(query)` first.
 - If a query path returns no chunks (for example flow/find_usage answer branches), it falls back to retrieval-only chunk fetch for fair file-hit measurement.
 
-### ✅ RAGAS Evaluation
+## ✅ RAGAS Evaluation
 
 For answer-quality evaluation, run the RAGAS script:
 
@@ -285,12 +285,6 @@ Optional flags:
 - `--top-k N` to pass top-k to `run_rag_pipeline`
 
 ---
-
-### 🧠 Key Insight
-
-Code is not plain text — it is structured logic.
-
-By leveraging AST parsing, this system moves beyond basic RAG and enables **true code understanding**.
 
 ## 🚀 Setup
 
