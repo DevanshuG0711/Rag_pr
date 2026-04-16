@@ -248,7 +248,10 @@ In our evaluation, AST-based chunking significantly improved retrieval accuracy 
 
 This demonstrates that understanding code structure is critical for building reliable code intelligence systems.
 
+---
+
 ## ✅ Golden Set Evaluation (File Hit Rate@3)
+
 
 We evaluate retrieval quality using a golden dataset and report **file hit rate@3**.
 
@@ -266,6 +269,8 @@ python eval/evaluate_rag.py
 Notes:
 - The evaluator uses `run_rag_pipeline(query)` first.
 - If a query path returns no chunks (for example flow/find_usage answer branches), it falls back to retrieval-only chunk fetch for fair file-hit measurement.
+
+---
 
 ## ✅ RAGAS Evaluation
 
