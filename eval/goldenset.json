@@ -1,0 +1,77 @@
+[
+  {
+    "query": "which function calls db_check",
+    "expected_file": "test_code.py",
+    "expected_function": "validate_user"
+  },
+  {
+    "query": "who calls db_check",
+    "expected_file": "test_code.py",
+    "expected_function": "validate_user"
+  },
+  {
+    "query": "which function calls validate_user",
+    "expected_file": "test_code.py",
+    "expected_function": "login"
+  },
+  {
+    "query": "where is validate_user used",
+    "expected_file": "test_code.py",
+    "expected_function": "login"
+  },
+  {
+    "query": "what does login do",
+    "expected_file": "test_code.py",
+    "expected_function": "login"
+  },
+  {
+    "query": "show login flow",
+    "expected_file": "test_code.py",
+    "expected_function": "login"
+  },
+  {
+    "query": "which functions are called by login",
+    "expected_file": "test_code.py",
+    "expected_function": "login"
+  },
+  {
+    "query": "what does validate_user do",
+    "expected_file": "test_code.py",
+    "expected_function": "validate_user"
+  },
+  {
+    "query": "which functions are called by validate_user",
+    "expected_file": "test_code.py",
+    "expected_function": "validate_user"
+  },
+  {
+    "query": "what is the flow of validate_user",
+    "expected_file": "test_code.py",
+    "expected_function": "validate_user"
+  },
+  {
+    "query": "which function calls save_session",
+    "expected_file": "test_code.py",
+    "expected_function": "create_session"
+  },
+  {
+    "query": "what does create_session do",
+    "expected_file": "test_code.py",
+    "expected_function": "create_session"
+  },
+  {
+    "query": "which functions are called by create_session",
+    "expected_file": "test_code.py",
+    "expected_function": "create_session"
+  },
+  {
+    "query": "which function calls log_attempt",
+    "expected_file": "test_code.py",
+    "expected_function": "validate_user"
+  },
+  {
+    "query": "what does db_check do",
+    "expected_file": "test_code.py",
+    "expected_function": "db_check"
+  }
+]

@@ -1,15 +1,22 @@
-# def login():
-#     validate_user()
-#     create_session()
+def login():
+    validate_user()
+    create_session()
 
-# def validate_user():
-#     db_check()
+def validate_user():
+    db_check()
+    log_attempt()
 
-# def db_check():
-#     pass
+def db_check():
+    pass
 
-# def create_session():
-#     pass
+def create_session():
+    save_session()
+
+def save_session():
+    pass
+
+def log_attempt():
+    pass
 
 
 
@@ -42,15 +49,15 @@
 #     print(c["file_name"])
 
 
-from app.services.vector_store import fetch_all_chunks_by_file
+# from app.services.vector_store import fetch_all_chunks_by_file
 
 
-file_name = "main.py"
+# file_name = "main.py"
 
-chunks = fetch_all_chunks_by_file(file_name)
+# chunks = fetch_all_chunks_by_file(file_name)
 
-print("Total chunks:", len(chunks))
-print("\nFiles found:\n")
+# print("Total chunks:", len(chunks))
+# print("\nFiles found:\n")
 
-for c in chunks:
-    print(c.get("file_name"))
+# for c in chunks:
+#     print(c.get("file_name"))
