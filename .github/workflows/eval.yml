@@ -21,5 +21,52 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+        - name: Bootstrap index for evaluation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          from app.services.chunking import chunk_text
+          from app.services.call_graph_store import upsert_call_graph
+          from app.services.embeddings import generate_embeddings
+          from app.services.ingest import extract_code_chunks
+          from app.services.ingest import extract_python_chunks_and_graph
+          from app.services.vector_store import store_chunk_embeddings
+
+          file_name = "test_code.py"
+          file_path = Path(file_name)
+
+          if not file_path.exists():
+            raise FileNotFoundError(f"Missing bootstrap file: {file_name}")
+
+          code = file_path.read_text(encoding="utf-8")
+
+          chunks = []
+          chunk_metadata = []
+          call_graph = {}
+
+          if file_name.endswith(".py"):
+            chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+              code=code,
+              file_name=file_name,
+            )
+          else:
+            chunks, chunk_metadata = extract_code_chunks(code=code, file_name=file_name)
+
+          if not chunks:
+            chunks = chunk_text(text=code, chunk_size=500, overlap=50)
+
+          embeddings = generate_embeddings(chunks=chunks)
+          store_chunk_embeddings(
+            file_name=file_name,
+            chunks=chunks,
+            embeddings=embeddings,
+            chunk_metadata=chunk_metadata if chunk_metadata else None,
+          )
+
+          if call_graph:
+            upsert_call_graph(file_name=file_name, call_graph=call_graph)
+          PY
+
       - name: Run evaluation
         run: python eval/evaluate_rag.py
