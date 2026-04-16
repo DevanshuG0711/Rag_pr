@@ -1,0 +1,102 @@
+[
+  {
+    "query": "which function calls connect_db",
+    "expected_file": "db.py"
+  },
+  {
+    "query": "who calls connect_db",
+    "expected_file": "db.py"
+  },
+  {
+    "query": "which function calls db_check",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "where is db_check used",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "what is the flow of login",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "which functions are involved in login",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "how does login work",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "what does validate_user do",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "which functions are called by validate_user",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "which function calls log_attempt",
+    "expected_file": "utils.py"
+  },
+  {
+    "query": "what does log_attempt do",
+    "expected_file": "utils.py"
+  },
+  {
+    "query": "which function calls create_session",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "how is session created",
+    "expected_file": "session.py"
+  },
+  {
+    "query": "what does create_session do",
+    "expected_file": "session.py"
+  },
+  {
+    "query": "which functions are called inside create_session",
+    "expected_file": "session.py"
+  },
+  {
+    "query": "which function calls save_session",
+    "expected_file": "session.py"
+  },
+  {
+    "query": "what does save_session do",
+    "expected_file": "session.py"
+  },
+  {
+    "query": "which function calls generate_token",
+    "expected_file": "session.py"
+  },
+  {
+    "query": "what does generate_token do",
+    "expected_file": "utils.py"
+  },
+  {
+    "query": "where is generate_token used",
+    "expected_file": "session.py"
+  },
+  {
+    "query": "which functions are involved in authentication",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "what happens during login process",
+    "expected_file": "auth.py"
+  },
+  {
+    "query": "which functions are part of database interaction",
+    "expected_file": "db.py"
+  },
+  {
+    "query": "what functions connect to the database",
+    "expected_file": "db.py"
+  },
+  {
+    "query": "which functions are indirectly involved in connect_db",
+    "expected_file": "db.py"
+  }
+]

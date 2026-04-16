@@ -34,46 +34,48 @@ jobs:
           from app.services.vector_store import store_chunk_embeddings
           from app.services.call_graph_store import upsert_call_graph
 
-          file_name = "test_code.py"
-          file_path = Path(file_name)
+          folder = Path("eval/test_repo")
 
-          if not file_path.exists():
-              raise FileNotFoundError(f"Missing bootstrap file: {file_name}")
+          if not folder.exists():
+              raise FileNotFoundError("Missing test_repo folder")
 
-          code = file_path.read_text(encoding="utf-8")
+          for file_path in folder.glob("*.py"):
+              file_name = file_path.name
+              print(f"Ingesting {file_name}")
 
-          chunks = []
-          chunk_metadata = []
-          call_graph = {}
+              code = file_path.read_text(encoding="utf-8")
 
-          if file_name.endswith(".py"):
-              chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
-                  code=code,
+              chunks = []
+              chunk_metadata = []
+              call_graph = {}
+
+              if file_name.endswith(".py"):
+                  chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+                      code=code,
+                      file_name=file_name,
+                  )
+              else:
+                  chunks, chunk_metadata = extract_code_chunks(code=code, file_name=file_name)
+
+              if not chunks:
+                  chunks = [code]
+
+              embeddings = generate_embeddings(chunks=chunks)
+
+              store_chunk_embeddings(
                   file_name=file_name,
+                  chunks=chunks,
+                  embeddings=embeddings,
+                  chunk_metadata=chunk_metadata if chunk_metadata else None,
               )
-          else:
-              chunks, chunk_metadata = extract_code_chunks(code=code, file_name=file_name)
 
-          if not chunks:
-              chunks = [code]  # fallback simple
+              if call_graph:
+                  try:
+                      upsert_call_graph(file_name=file_name, call_graph=call_graph)
+                  except Exception:
+                      print(f"Skipping graph for {file_name}")
 
-          embeddings = generate_embeddings(chunks=chunks)
-
-          store_chunk_embeddings(
-              file_name=file_name,
-              chunks=chunks,
-              embeddings=embeddings,
-              chunk_metadata=chunk_metadata if chunk_metadata else None,
-          )
-
-          if call_graph:
-              try:
-                  upsert_call_graph(file_name=file_name, call_graph=call_graph)
-              
-              except Exception:
-                  print("Skipping call graph storage (no DB in CI)")
-              
-          print("Bootstrap indexing completed")
+          print("Bootstrap indexing completed for all files")
           PY
 
       - name: Run evaluation
