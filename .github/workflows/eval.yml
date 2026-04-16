@@ -22,4 +22,4 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run evaluation
-        run: python evaluate_rag.py
+        run: python eval/evaluate_rag.py
