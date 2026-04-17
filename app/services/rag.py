@@ -770,6 +770,8 @@ def run_rag_pipeline(
 ) -> tuple[str, list[dict[str, object]]]:
 	if str(file_name or "").strip():
 		mode = "file_only"
+	elif repo_indexed:
+		mode = "global"
 	else:
 		mode = "global"
 

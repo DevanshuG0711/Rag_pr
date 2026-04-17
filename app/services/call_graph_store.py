@@ -53,9 +53,9 @@ def upsert_call_graph(file_name: str, call_graph: dict[str, list[str]]) -> int:
         return 0
 
     dsn = _postgres_dsn()
-    print("POSTGRES_DSN:", dsn)
     if not dsn:
-        raise ValueError("POSTGRES_DSN is not set")
+        logger.info("Postgres not configured, skipping call graph storage")
+        return 0
 
     rows = 0
     try:
@@ -66,8 +66,6 @@ def upsert_call_graph(file_name: str, call_graph: dict[str, list[str]]) -> int:
             with conn.cursor() as cur:
                 for function_name, called_functions in call_graph.items():
                     normalized_called = [str(name) for name in (called_functions or [])]
-
-                    print("INSERTING:", function_name, normalized_called)  # ✅ DEBUG
 
                     cur.execute(
                         """
@@ -81,8 +79,9 @@ def upsert_call_graph(file_name: str, call_graph: dict[str, list[str]]) -> int:
                     rows += 1
 
             conn.commit()
+            logger.debug("Call graph stored")
     except Exception as e:
-        print("POSTGRES ERROR:", str(e))
+        logger.exception("Failed to upsert call graph")
         raise
 
     return rows
