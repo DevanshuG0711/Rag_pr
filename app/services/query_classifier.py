@@ -4,8 +4,6 @@ from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
 
 
-EXPLAIN_TERMS = {"what", "explain", "describe", "meaning"}
-SEARCH_TERMS = {"find", "where", "locate"}
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"
 VALID_LABELS = {"explain", "find_usage", "flow", "search"}

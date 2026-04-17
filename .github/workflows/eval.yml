@@ -72,8 +72,10 @@ jobs:
               if call_graph:
                   try:
                       upsert_call_graph(file_name=file_name, call_graph=call_graph)
-                  except Exception:
-                      print(f"Skipping graph for {file_name}")
+                  except Exception as exc:
+                    print(
+                      f"Graph storage skipped (Postgres not configured) for {file_name}: {exc}"
+                    )
 
           print("Bootstrap indexing completed for all files")
           PY

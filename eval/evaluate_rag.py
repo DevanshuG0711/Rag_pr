@@ -86,13 +86,18 @@ def merge_results(
 
 
 def load_golden_data() -> list[dict[str, str]]:
-    """Load golden examples from eval/advanced_golden_set.json."""
+    """Load golden examples from eval/golden_set.json with advanced fallback."""
     eval_dir = Path(__file__).parent
-    dataset_path = eval_dir / "advanced_golden_set.json"
+    primary_dataset = eval_dir / "golden_set.json"
+    fallback_dataset = eval_dir / "advanced_golden_set.json"
 
-    if not dataset_path.exists():
+    if primary_dataset.exists():
+        dataset_path = primary_dataset
+    elif fallback_dataset.exists():
+        dataset_path = fallback_dataset
+    else:
         raise FileNotFoundError(
-            "Missing evaluation dataset: eval/advanced_golden_set.json"
+            "Missing evaluation dataset: expected eval/golden_set.json or eval/advanced_golden_set.json"
         )
 
     with dataset_path.open("r", encoding="utf-8") as file:

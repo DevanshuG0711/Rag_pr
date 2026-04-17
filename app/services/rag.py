@@ -7,7 +7,6 @@ from typing import Literal
 from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
 
-from app.services.call_graph import extract_call_graph
 from app.services.call_graph_query import build_graph
 from app.services.call_graph_query import expand_with_graph
 from app.services.call_graph_query import get_callees
@@ -23,7 +22,6 @@ from app.services.vector_store import fetch_chunks_by_function_names
 
 
 logger = logging.getLogger(__name__)
-FLOW_QUERY_TERMS = ("flow", "calls", "called by", "dependency")
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "llama3"
 CONTEXT_MAX_TOKENS = 1200
@@ -159,15 +157,9 @@ def retrieve_relevant_chunks(
 		)
 
 	query_type = classify_query(query)
+	effective_top_k = max(1, top_k)
 
-	if query_type == "explain":
-		effective_top_k = 8
-	else:
-		effective_top_k = 5
-	
-	print("query_type:", query_type, "top_k:", effective_top_k)
-
-	logger.info("query_type=%s effective_top_k=%s", query_type, effective_top_k)
+	logger.debug("query_type=%s top_k=%s", query_type, effective_top_k)
 
 	return hybrid_search(query=query, top_k=effective_top_k)
 
@@ -349,107 +341,6 @@ def build_context(chunks: list[dict[str, object]]) -> str:
 	
 
 	return "\n".join(parts).rstrip()
-
-
-def _build_query_aware_graph_context(
-	query: str,
-	graph: dict[str, list[str]],
-	retrieved_chunks: list[dict[str, object]],
-) -> str:
-	if not graph:
-		return ""
-
-	mode = _detect_graph_query_mode(query)
-	if mode == "none":
-		return ""
-
-	build_graph(graph)
-	target_functions = list(
-		dict.fromkeys(
-			str(chunk.get("name") or "").strip()
-			for chunk in retrieved_chunks
-			if str(chunk.get("type") or "") == "function" and str(chunk.get("name") or "").strip()
-		)
-	)
-
-	if mode == "caller":
-		caller_target = _extract_caller_query_target(query)
-		if caller_target:
-			target_functions = [caller_target]
-
-	if not target_functions:
-		return ""
-
-	relations: list[str] = []
-
-	if mode == "caller":
-		for target in target_functions:
-			for caller in get_callers(target):
-				relations.append(f"{caller} calls {target}")
-	elif mode == "callee":
-		for target in target_functions:
-			for callee in get_callees(target):
-				relations.append(f"{target} calls {callee}")
-	else:
-		expanded = expand_with_graph(target_functions, max_depth=2)
-		expanded_set = set(expanded)
-		for caller, callees in graph.items():
-			if caller not in expanded_set:
-				continue
-			for callee in callees:
-				if callee in expanded_set:
-					relations.append(f"{caller} calls {callee}")
-
-	relations = list(dict.fromkeys(relations))
-	if not relations:
-		return ""
-
-	header = "Flow:" if mode == "flow" else "Relationships:"
-	return "\n".join([header, *relations])
-
-
-def _build_flow_context(chunks: list[dict[str, object]]) -> str:
-	merged_graph: dict[str, list[str]] = {}
-
-	for chunk in chunks[:5]:
-		chunk_text = str(chunk.get("chunk_text") or "")
-		if not chunk_text.strip():
-			continue
-
-		try:
-			chunk_graph = extract_call_graph(chunk_text)
-		except Exception:
-			continue
-
-		for func, called_funcs in chunk_graph.items():
-			existing = merged_graph.get(func, [])
-			for called in called_funcs:
-				if called not in existing:
-					existing.append(called)
-			merged_graph[func] = existing
-
-	lines: list[str] = ["Flow:"]
-	for func, called_funcs in merged_graph.items():
-		if not called_funcs:
-			continue
-		lines.append(f"{func} calls {', '.join(called_funcs)}")
-
-	if len(lines) == 1:
-		return ""
-
-	return "\n".join(lines)
-
-
-def _build_flow_from_db(graph: dict[str, list[str]]) -> str:
-	lines = ["Flow:"]
-	for func, called in graph.items():
-		if called:
-			lines.append(f"{func} calls {', '.join(called)}")
-
-	if len(lines) == 1:
-		return ""
-
-	return "\n".join(lines)
 
 
 def _extract_flow_edges(graph_lines: list[str]) -> list[tuple[str, str]]:
@@ -775,8 +666,7 @@ def run_rag_pipeline(
 	else:
 		mode = "global"
 
-	print("MODE:", mode)
-	print("FILE:", file_name)
+	logger.debug("mode=%s file=%s", mode, file_name)
 
 	query_type = classify_query(query)
 	effective_mode = "file_only" if mode == "file_only" and str(file_name or "").strip() else "global"

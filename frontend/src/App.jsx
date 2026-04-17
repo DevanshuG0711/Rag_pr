@@ -5,6 +5,8 @@ import QueryInput from "./components/QueryInput";
 import AnswerPanel from "./components/AnswerPanel";
 
 const HISTORY_KEY = "rag_query_history_v1";
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 function App() {
   const [query, setQuery] = useState("");
@@ -95,7 +97,7 @@ function App() {
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      await axios.post("http://127.0.0.1:8000/api/ingest", formData);
+      await axios.post(`${API_BASE_URL}/api/ingest`, formData);
       setUploadStatus("File uploaded successfully.");
     } catch (err) {
       console.error(err);
@@ -113,7 +115,7 @@ function App() {
       setLoading(true);
       setErrorMessage("");
 
-      const res = await axios.post("http://127.0.0.1:8000/api/query", {
+      const res = await axios.post(`${API_BASE_URL}/api/query`, {
         query: trimmedQuery,
         top_k: 5,
       });
@@ -152,7 +154,7 @@ function App() {
       setIndexingRepo(true);
       setRepoStatus("");
 
-      await axios.post("http://127.0.0.1:8000/api/index_repo", {
+      await axios.post(`${API_BASE_URL}/api/index_repo`, {
         repo_url: trimmedRepoUrl,
       });
 
