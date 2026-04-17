@@ -96,6 +96,10 @@ def _extract_caller_query_target(query: str) -> str:
 	patterns = [
 		r"\bwho calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
 		r"\bwhich function calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bcalled by\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bfunctions? called by\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bcalled inside\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\binside\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
 	]
 
 	for pattern in patterns:
@@ -113,6 +117,10 @@ def _extract_usage_query_target(query: str) -> str:
 		r"\bwho calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
 		r"\bwhich function calls\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
 		r"\bwhat does\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+calls?\b",
+		r"\bcalled by\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bfunctions? called by\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\bcalled inside\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+		r"\binside\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
 	]
 
 	for pattern in patterns:
@@ -682,20 +690,20 @@ def run_rag_pipeline(
 		else:
 			graph = get_all_call_graph()
 		if not graph:
-			return "No call graph data available.", []
+			logger.info("Call graph unavailable for find_usage query; falling back to standard RAG path")
+		else:
+			build_graph(graph)
+			normalized_query = _normalize_query_for_intent(query)
+			if re.search(r"\bwhat does\b", normalized_query):
+				callees = get_callees(target)
+				if not callees:
+					return f"No callees found for {target}.", []
+				return "\n".join(f"{target} calls {callee}" for callee in callees), []
 
-		build_graph(graph)
-		normalized_query = _normalize_query_for_intent(query)
-		if re.search(r"\bwhat does\b", normalized_query):
-			callees = get_callees(target)
-			if not callees:
-				return f"No callees found for {target}.", []
-			return "\n".join(f"{target} calls {callee}" for callee in callees), []
-
-		callers = get_callers(target)
-		if not callers:
-			return f"No callers found for {target}.", []
-		return "\n".join(f"{caller} calls {target}" for caller in callers), []
+			callers = get_callers(target)
+			if not callers:
+				return f"No callers found for {target}.", []
+			return "\n".join(f"{caller} calls {target}" for caller in callers), []
 
 	if query_type == "flow":
 		if effective_mode == "file_only" and normalized_file_name:
@@ -703,26 +711,26 @@ def run_rag_pipeline(
 		else:
 			graph = get_all_call_graph()
 		if not graph:
-			return "No call graph data available.", []
+			logger.info("Call graph unavailable for flow query; falling back to standard RAG path")
+		else:
+			build_graph(graph)
+			normalized_query = _normalize_query_for_intent(query)
+			seeds = [name for name in graph if re.search(rf"\b{re.escape(name.lower())}\b", normalized_query)]
+			expanded = expand_with_graph(seeds if seeds else list(graph.keys()), max_depth=2)
+			expanded_set = set(expanded)
 
-		build_graph(graph)
-		normalized_query = _normalize_query_for_intent(query)
-		seeds = [name for name in graph if re.search(rf"\b{re.escape(name.lower())}\b", normalized_query)]
-		expanded = expand_with_graph(seeds if seeds else list(graph.keys()), max_depth=2)
-		expanded_set = set(expanded)
+			lines: list[str] = []
+			for caller, callees in graph.items():
+				if caller not in expanded_set:
+					continue
+				for callee in callees:
+					if callee in expanded_set:
+						lines.append(f"{caller} calls {callee}")
 
-		lines: list[str] = []
-		for caller, callees in graph.items():
-			if caller not in expanded_set:
-				continue
-			for callee in callees:
-				if callee in expanded_set:
-					lines.append(f"{caller} calls {callee}")
+			if not lines:
+				return "No call relationships found.", []
 
-		if not lines:
-			return "No call relationships found.", []
-
-		return generate_flow_explanation(lines), []
+			return generate_flow_explanation(lines), []
 
 	retrieved_chunks = retrieve_relevant_chunks(
 		query=query,
