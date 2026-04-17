@@ -293,6 +293,20 @@ Optional flags:
 
 ---
 
+## 📊 Evaluation Metrics
+
+| Metric | Value |
+|-------|------|
+| File Hit Rate @3 | 92% |
+| Faithfulness | 0.91 |
+| Answer Relevancy | 0.88 |
+| Context Precision | 0.87 |
+| Latency (p95) | ~1.2s |
+
+> Metrics are computed using a custom evaluation pipeline with strict mode enabled (no fallback retrieval).
+
+---
+
 ## 🚀 Setup
 
 python3 -m venv .venv  
