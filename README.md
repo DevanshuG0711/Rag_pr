@@ -4,7 +4,7 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-336791?logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/Frontend-React-61DAFB?logo=react&logoColor=black)
 ![TailwindCSS](https://img.shields.io/badge/Styling-TailwindCSS-38B2AC?logo=tailwindcss&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Active-success)
+<!-- ![Status](https://img.shields.io/badge/Status-Active-success) -->
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 # 🚀 Codebase Intelligence Engine (Advanced RAG System)
