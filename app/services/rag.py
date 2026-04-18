@@ -6,6 +6,19 @@ from typing import List, Dict
 from typing import Literal
 from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+
+import ssl
+import certifi
+
+ssl._create_default_https_context = ssl.create_default_context
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+
 
 from app.services.call_graph_query import build_graph
 from app.services.call_graph_query import expand_with_graph
@@ -16,14 +29,15 @@ from app.services.call_graph_query import get_call_graph_for_file
 from app.services.hybrid_search import hybrid_search
 from app.services.query_classifier import classify_query
 from app.services.embeddings import generate_embeddings
+from app.services.tls_http import format_tls_error
 from app.services.vector_store import fetch_all_chunks_by_file
 from app.services.vector_store import search_similar_chunks_by_file
 from app.services.vector_store import fetch_chunks_by_function_names
 
 
 logger = logging.getLogger(__name__)
-OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "llama3"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 CONTEXT_MAX_TOKENS = 1200
 QUERY_TYPO_FIXES = {
 	"funtion": "function",
@@ -35,17 +49,6 @@ QUERY_TYPO_FIXES = {
 	"cals": "calls",
 	"clls": "calls",
 }
-
-
-def _is_ollama_available() -> bool:
-	url = f"{OLLAMA_BASE_URL}/api/tags"
-
-	try:
-		with urllib_request.urlopen(url, timeout=2.0) as response:
-			return response.status == 200
-	except (URLError, HTTPError, TimeoutError):
-		return False
-
 
 def _normalize_query_for_intent(query: str) -> str:
 	normalized = query.lower()
@@ -143,6 +146,79 @@ def _is_whole_file_query(query: str) -> bool:
 	)
 
 
+def _is_broad_or_vague_query(query: str) -> bool:
+	normalized = _normalize_query_for_intent(query)
+	patterns = [
+		r"\bhow is\b",
+		r"\bhow does\b",
+		r"\bwhy\b",
+		r"\bexplain\b",
+	]
+	return any(re.search(pattern, normalized) for pattern in patterns)
+
+
+def _get_llm_provider() -> str:
+	return str(os.getenv("LLM_PROVIDER", "groq")).strip().lower()
+
+
+def _log_generation_route(route_type: str) -> None:
+	provider = _get_llm_provider()
+	print("LLM_PROVIDER:", provider)
+	print("ROUTING:", route_type)
+	print("USING_GROQ:", provider == "groq")
+
+
+def _is_noise_file(file_name: str) -> bool:
+	lowered = file_name.lower()
+	return any(x in lowered for x in ["config", "eslint", "tailwind", "package", ".json", ".md", "setup.", "lock", "dist", "build"])
+
+
+def _adjust_score(original_score: float, weight: float) -> float:
+	return original_score + weight
+
+
+def _apply_heuristic_reranking(chunks: list[dict[str, object]], top_k: int, is_vague: bool) -> list[dict[str, object]]:
+	filtered_chunks = []
+	for chunk in chunks:
+		fname = str(chunk.get("file_name", ""))
+		lowered = fname.lower()
+		
+		if _is_noise_file(fname):
+			if is_vague:
+				continue
+			weight = -5.0
+		elif lowered.endswith((".py", ".go")):
+			weight = 2.0
+		elif lowered.endswith((".js", ".ts", ".jsx", ".tsx")):
+			weight = 1.0
+		else:
+			weight = 0.0
+
+		original_score = float(chunk.get("score", 0.0) or 0.0)
+		chunk["heuristic_score"] = _adjust_score(original_score, weight)
+		filtered_chunks.append(chunk)
+
+	print("IS_VAGUE:", is_vague)
+	print("AFTER_FILTER:", len(filtered_chunks))
+
+	filtered_chunks.sort(key=lambda x: float(x.get("heuristic_score", -999.0)), reverse=True)
+
+	max_per_file = 2 if is_vague else 3
+	final_chunks = []
+	file_counts = {}
+
+	for chunk in filtered_chunks:
+		fname = str(chunk.get("file_name", ""))
+		if file_counts.get(fname, 0) < max_per_file:
+			final_chunks.append(chunk)
+			file_counts[fname] = file_counts.get(fname, 0) + 1
+		if len(final_chunks) >= top_k:
+			break
+
+	print("FINAL_CHUNKS:", len(final_chunks))
+	return final_chunks
+
+
 def retrieve_relevant_chunks(
 	query: str,
 	top_k: int = 5,
@@ -166,10 +242,14 @@ def retrieve_relevant_chunks(
 
 	query_type = classify_query(query)
 	effective_top_k = max(1, top_k)
+	is_vague = _is_broad_or_vague_query(query)
 
-	logger.debug("query_type=%s top_k=%s", query_type, effective_top_k)
+	logger.debug("query_type=%s top_k=%s is_vague=%s", query_type, effective_top_k, is_vague)
 
-	return hybrid_search(query=query, top_k=effective_top_k)
+	fetch_k = effective_top_k * 3 if is_vague else effective_top_k * 2
+	raw_chunks = hybrid_search(query=query, top_k=fetch_k)
+
+	return _apply_heuristic_reranking(raw_chunks, effective_top_k, is_vague)
 
 
 def _unique_chunk_key(chunk: dict[str, object]) -> str:
@@ -455,43 +535,30 @@ def generate_flow_explanation(graph_lines: list[str]) -> str:
 	if not edges:
 		return "No call relationships found."
 
-	if _is_ollama_available():
-		try:
-			url = f"{OLLAMA_BASE_URL}/api/generate"
-			flow_text = "\n".join(f"{caller} calls {callee}" for caller, callee in edges)
-			prompt = (
-				"You are a code assistant. Convert function-call edges into a concise, human-readable explanation.\n"
-				"Rules:\n"
-				"- Return only explanation text.\n"
-				"- Use simple English.\n"
-				"- Merge connected steps and avoid repetition.\n"
-				"- Keep output concise: 3 to 5 lines maximum.\n\n"
-				"Edges:\n"
-				f"{flow_text}\n"
-			)
+	flow_text = "\n".join(f"{caller} calls {callee}" for caller, callee in edges)
+	flow_context = (
+		"Convert function-call edges into a concise, human-readable explanation.\n"
+		"Return only explanation text with 3 to 5 lines max.\n\n"
+		f"Edges:\n{flow_text}"
+	)
 
-			payload = {
-				"model": OLLAMA_MODEL,
-				"prompt": prompt,
-				"stream": False,
-			}
-			data = json.dumps(payload).encode("utf-8")
-			req = urllib_request.Request(
-				url,
-				data=data,
-				headers={"Content-Type": "application/json"},
-				method="POST",
-			)
+	print("LLM_PROVIDER: groq")
+	print("ROUTING: LLM")
+	print("USING_GROQ:", True)
 
-			with urllib_request.urlopen(req, timeout=20.0) as response:
-				if response.status == 200:
-					body = json.loads(response.read().decode("utf-8"))
-					text = str(body.get("response") or "").strip()
-					if text:
-						lines = [line.strip() for line in text.splitlines() if line.strip()]
-						return "\n".join(lines[:5])
-		except Exception:
-			pass
+	if not os.getenv("GROQ_API_KEY"):
+		print("GROQ_API_KEY missing → using local")
+		return _generate_flow_explanation_rule_based([f"{caller} calls {callee}" for caller, callee in edges])
+
+	try:
+		text = _generate_with_groq(query="Explain this call flow.", context=flow_context)
+		lines = [line.strip() for line in text.splitlines() if line.strip()]
+		if lines:
+			return "\n".join(lines[:5])
+	except Exception as exc:
+		logger.error("Groq flow generation failed: %s", exc)
+		print("GROQ_FAILED:", str(exc))
+		print("FALLBACK: LOCAL")
 
 	return _generate_flow_explanation_rule_based([f"{caller} calls {callee}" for caller, callee in edges])
 
@@ -527,60 +594,66 @@ def _generate_with_openai(query: str, context: str) -> str:
 	return response.output_text.strip()
 
 
-def _generate_with_ollama(query: str, context: str) -> str:
-	url = f"{OLLAMA_BASE_URL}/api/generate"
-	prompt = (
-		"You are a code assistant.\n"
-		"Use the provided context to answer the question clearly and concisely.\n\n"
+def _generate_with_groq(query: str, context: str) -> str:
+	api_key = str(os.getenv("GROQ_API_KEY", "")).strip()
+	if not api_key:
+		raise ValueError("GROQ_API_KEY is not set")
+
+	user_content = (
 		"Context:\n"
 		f"{context}\n\n"
 		"Question:\n"
-		f"{query}\n"
-	)
-	payload = {
-		"model": OLLAMA_MODEL,
-		"prompt": prompt,
-		"stream": True,
-	}
-	data = json.dumps(payload).encode("utf-8")
-	req = urllib_request.Request(
-		url,
-		data=data,
-		headers={"Content-Type": "application/json"},
-		method="POST",
+		f"{query}\n\n"
+		"Answer clearly and concisely."
 	)
 
-	parts: list[str] = []
+	model_name = str(os.getenv("GROQ_MODEL", GROQ_MODEL)).strip() or GROQ_MODEL
+	print("GROQ MODEL:", model_name)
+	payload = {
+		"model": model_name,
+		"messages": [
+			{"role": "system", "content": "You are a helpful code assistant."},
+			{"role": "user", "content": user_content},
+		],
+		"temperature": 0.2,
+	}
+
+	data = json.dumps(payload).encode("utf-8")
+	req = urllib_request.Request(
+		GROQ_BASE_URL,
+		data=data,
+		headers={
+			"Authorization": f"Bearer {api_key}",
+			"Content-Type": "application/json",
+			"User-Agent": "python-requests/2.31.0",
+		},
+		method="POST",
+	)
 
 	try:
 		with urllib_request.urlopen(req, timeout=30.0) as response:
 			if response.status != 200:
-				raise ValueError(f"Ollama returned status {response.status}")
+				raise ValueError(f"Groq returned status {response.status}")
 
-			for raw_line in response:
-				line = raw_line.decode("utf-8").strip()
-				if not line:
-					continue
-
-				try:
-					chunk = json.loads(line)
-				except json.JSONDecodeError:
-					continue
-
-				if "error" in chunk:
-					raise ValueError(f"Ollama error: {chunk['error']}")
-
-				piece = chunk.get("response")
-				if piece:
-					parts.append(str(piece))
-	except (URLError, HTTPError, TimeoutError) as exc:
-		raise ValueError("Failed to reach Ollama") from exc
-
-	final_text = "".join(parts).strip()
-	if not final_text:
-		raise ValueError("Ollama returned an empty response")
-
-	return final_text
+			body = json.loads(response.read().decode("utf-8"))
+			content = str(
+				(
+					body.get("choices", [{}])[0]
+					.get("message", {})
+					.get("content", "")
+				)
+			).strip()
+			if not content:
+				raise ValueError("Groq returned an empty response")
+			return content
+	except HTTPError as exc:
+		error_detail = format_tls_error(exc)
+		logger.warning("Groq request failed: %s", error_detail)
+		raise ValueError(f"Failed to reach Groq: {error_detail}") from exc
+	except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+		error_detail = format_tls_error(exc)
+		logger.warning("Groq request failed: %s", error_detail)
+		raise ValueError(f"Failed to reach Groq: {error_detail}") from exc
 
 
 
@@ -641,23 +714,29 @@ def _generate_local_answer(
 # The updated _generate_local_answer function first checks if the query is likely asking about the flow of function calls. If it detects flow-related terms, it tries to extract and return the flow explanation from the context. If not, it falls back to the original keyword-based sentence extraction method. This way, we can provide a more relevant answer for flow-related queries without needing an LLM.
 
 def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -> str:
-	if os.getenv("OPENAI_API_KEY"):
+	provider = _get_llm_provider()
+	print("LLM_PROVIDER:", provider)
+	print("CONTEXT_CHARS:", len(context or ""))
+	print("CONTEXT_PREVIEW:", str(context or "")[:160])
+	print("CHUNK_COUNT:", len(chunks or []))
+
+	if provider == "openai":
+		print("ROUTING: LLM (OpenAI)")
+		return _generate_with_openai(query=query, context=context)
+	elif provider == "groq":
+		print("ROUTING: LLM (Groq)")
+		print("CALLING GROQ...")
+		if not os.getenv("GROQ_API_KEY"):
+			print("GROQ_API_KEY missing -> using local")
+			return _generate_local_answer(query=query, context=context, chunks=chunks)
 		try:
-			return _generate_with_openai(query=query, context=context)
-		except Exception:
-			if _is_ollama_available():
-				try:
-					return _generate_with_ollama(query=query, context=context)
-				except Exception:
-					return _generate_local_answer(query=query, context=context, chunks=chunks)
+			return _generate_with_groq(query=query, context=context)
+		except Exception as exc:
+			print("GROQ ERROR:", str(exc))
+			print("FALLBACK: LOCAL")
 			return _generate_local_answer(query=query, context=context, chunks=chunks)
 
-	if _is_ollama_available():
-		try:
-			return _generate_with_ollama(query=query, context=context)
-		except Exception:
-			return _generate_local_answer(query=query, context=context, chunks=chunks)
-
+	print("ROUTING: LOCAL (unsupported provider)")
 	return _generate_local_answer(query=query, context=context, chunks=chunks)
 
 
@@ -679,6 +758,9 @@ def run_rag_pipeline(
 	query_type = classify_query(query)
 	effective_mode = "file_only" if mode == "file_only" and str(file_name or "").strip() else "global"
 	normalized_file_name = str(file_name or "").strip() or None
+
+	print("MODE:", mode)
+	print("QUERY TYPE:", query_type)
 
 	if query_type == "find_usage":
 		target = _extract_usage_query_target(query)
@@ -730,6 +812,7 @@ def run_rag_pipeline(
 			if not lines:
 				return "No call relationships found.", []
 
+			_log_generation_route("LLM_FLOW_GRAPH")
 			return generate_flow_explanation(lines), []
 
 	retrieved_chunks = retrieve_relevant_chunks(
@@ -745,12 +828,34 @@ def run_rag_pipeline(
 		mode=effective_mode,
 		file_name=normalized_file_name,
 	)
+
+	print("TOP CHUNKS:")
+	for chunk in retrieved_chunks:
+		print(f"{chunk.get('file_name')} | Score: {chunk.get('score', 'N/A')} | Preview: {str(chunk.get('chunk_text', ''))[:50].replace(chr(10), ' ')}")
+
 	context = build_context(retrieved_chunks)
+	unique_files = {
+		str(chunk.get("file_name") or "").strip()
+		for chunk in retrieved_chunks
+		if str(chunk.get("file_name") or "").strip()
+	}
+	has_multi_file_context = len(unique_files) > 1
+	repo_context = repo_indexed or has_multi_file_context
+	force_llm = query_type in {"explain", "flow"} or (
+		repo_context and _is_broad_or_vague_query(query)
+	)
+
+	if force_llm:
+		_log_generation_route("LLM")
+		answer = generate_answer(query=query, context=context, chunks=retrieved_chunks)
+		return answer, retrieved_chunks
 
 	if query_type == "search":
+		_log_generation_route("LOCAL")
 		answer = _generate_local_answer(query=query, context=context, chunks=retrieved_chunks)
 		return answer, retrieved_chunks
 
 	# explain
+	_log_generation_route("LLM")
 	answer = generate_answer(query=query, context=context, chunks=retrieved_chunks)
 	return answer, retrieved_chunks

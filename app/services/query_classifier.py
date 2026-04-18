@@ -1,12 +1,20 @@
+import os
 import re
 import json
+import logging
 from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from app.services.tls_http import format_tls_error
 
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 VALID_LABELS = {"explain", "find_usage", "flow", "search"}
+logger = logging.getLogger(__name__)
 
 
 def _normalize_label(raw_label: str) -> str:
@@ -60,6 +68,10 @@ def classify_query_rule_based(query: str) -> str:
 
 
 def classify_query_llm(query: str) -> str:
+    api_key = str(os.getenv("GROQ_API_KEY", "")).strip()
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is not set")
+
     prompt = (
         "You are an intent classifier for a code assistant.\n"
         "Classify the user query into exactly one label from this set:\n"
@@ -79,27 +91,50 @@ def classify_query_llm(query: str) -> str:
         f"User query: {query}\n"
     )
 
+    model_name = str(os.getenv("GROQ_MODEL", GROQ_MODEL)).strip() or GROQ_MODEL
+    print("GROQ MODEL:", model_name)
     payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
+        "model": model_name,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an intent classifier. Return only one label.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": 0,
     }
 
     data = json.dumps(payload).encode("utf-8")
     req = urllib_request.Request(
-        OLLAMA_URL,
+        GROQ_URL,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "python-requests/2.31.0",
+        },
         method="POST",
     )
 
     with urllib_request.urlopen(req, timeout=10.0) as response:
         if response.status != 200:
-            raise ValueError(f"Ollama returned status {response.status}")
+            raise ValueError(f"Groq returned status {response.status}")
 
         body = response.read().decode("utf-8")
         parsed = json.loads(body)
-        label = _normalize_label(str(parsed.get("response") or ""))
+        label = _normalize_label(
+            str(
+                (
+                    parsed.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+            )
+        )
 
         if label not in VALID_LABELS:
             raise ValueError(f"Invalid label from LLM: {label}")
@@ -110,5 +145,6 @@ def classify_query_llm(query: str) -> str:
 def classify_query(query: str) -> str:
     try:
         return classify_query_llm(query)
-    except (URLError, HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
+    except (URLError, HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("Query classification fallback (Groq unavailable): %s", format_tls_error(exc))
         return classify_query_rule_based(query)

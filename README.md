@@ -2,342 +2,145 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
 ![Qdrant](https://img.shields.io/badge/VectorDB-Qdrant-red)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-336791?logo=postgresql&logoColor=white)
+![React](https://img.shields.io/badge/Frontend-React-61DAFB?logo=react&logoColor=black)
+![TailwindCSS](https://img.shields.io/badge/Styling-TailwindCSS-38B2AC?logo=tailwindcss&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Active-success)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
+# 🚀 Codebase Intelligence Engine (Advanced RAG System)
 
-
-
-
-
-# 🚀 Codebase Intelligence Engine
-
-A production-grade system that transforms raw codebases into queryable, structured intelligence using AST parsing, hybrid retrieval, and call graph reasoning.
+A production-grade Retrieval-Augmented Generation (RAG) system engineered to transform raw codebases into queryable, structured intelligence. It moves beyond traditional text-based chunking using AST-based parsing, cross-encoder hybrid retrieval, and deterministic graph-based reasoning.
 
 ---
 
 ## 🧠 Problem Statement
 
-Understanding large codebases is hard.
+Traditional RAG systems fail on heavy codebases because they treat code as generic text, leading to destructive chunking and a complete loss of structural hierarchy (e.g., function dependencies, caller/callee metadata). They cannot reliably answer:
+- "What is the execution flow of this feature?"
+- "Which modules depend on this function?"
+- "Explain the core logic of this backend service without hallucinating config files."
 
-Traditional approaches:
-- Treat code as plain text ❌
-- Lose structure (functions, classes, relationships)
-- Cannot answer:
-  - "What is the flow of this feature?"
-  - "Which functions are involved?"
-  - "What does this function depend on?"
+## 💡 Our Solution
 
----
-
-## 💡 Solution
-
-This project evolves RAG into a Codebase Intelligence Engine that:
-
-- Understands code structure (AST)
-- Captures function relationships (call graph)
-- Retrieves using hybrid ranking (semantic + keyword)
-- Performs flow-aware reasoning
-
----
-
-<!-- ## 📁 Project Structure
-
-app/
- ├── api/            # Routes
- ├── services/       # Core logic (RAG, search, call graph)
- ├── models/         # Schemas
- ├── main.py         # Entry point -->
-
-## 🏗️ Architecture
-
-Code Input  
-↓  
-AST Parsing (tree-sitter)  
-↓  
-Chunking (function/class level)  
-↓  
-Metadata + Call Graph Extraction  
-↓  
-Embeddings (sentence-transformers)  
-↓  
-Vector DB (Qdrant)  
-↓  
-Hybrid Retrieval (Semantic + BM25 + RRF)  
-↓  
-Context Builder  
-↓  
-Flow Reasoning Layer  
-↓  
-Answer Generator (Local / LLM)  
-↓  
-Final Output  
+This Codebase Intelligence Engine natively understands software architecture:
+- Parses code structurally (AST-aware chunking for Python, Go, JS, TS).
+- Preserves caller-callee relationships in a custom Graph Store (PostgreSQL).
+- Ranks queries via a robust multi-stage pipeline (Semantic + BM25 Lexical + Cross-Encoder + Heuristic Re-ranking).
+- Actively routes queries using an LLM Intent Classifier.
 
 ---
 
 ## 🔥 Key Features
 
-### Structural Understanding
-- AST-based chunking (functions/classes)
-- Line-aware metadata (start/end lines)
-- Symbol-level indexing
+- **Structural Code Understanding**: Retains function and class boundaries, preserving exact line numbers, docstrings, and syntax trees.
+- **Graph-Based Call Routing**: Answers exact execution paths by walking a PostgreSQL-backed deterministic call graph.
+- **Advanced Retrieval Pipeline**: Fuses `sentence-transformers` vector search with `BM25` keyword matching using Reciprocal Rank Fusion (RRF), further refined by Cross-Encoder reranking.
+- **Heuristic Quality Filtering**: Dynamically weights backend logic files (`.py`, `.go`, `.ts`) over low-value configurations (`.json`, `tailwind.config`) to prevent LLM context pollution.
+- **Intelligent Query Classification**: Routes broad vs. specific queries optimally via an LLM judge (`explain`, `search`, `flow`, `find_usage`).
+- **Groq + Local Fallback Architecture**: Ultra-low latency LLM generation using Groq (`llama-3.3-70b-versatile`), protected by an automatic local fallback mechanism (Ollama) against network drops or rate limits.
+- **Full-Stack Interface**: FastAPI Python backend coupled with a modern React + Vite + TailwindCSS frontend.
 
-### Call Graph Reasoning
-- Extracts function dependencies
-- Answers flow-based queries
-- Enables code reasoning, not just search
+---
 
-### Hybrid Retrieval Engine
-- Semantic search (embeddings)
-- BM25 keyword ranking
-- Reciprocal Rank Fusion (RRF)
+## 🏗️ System Architecture
 
-Result: high-precision + high-recall retrieval
+### High-Level Data Flow
 
-### Context-Aware Answering
-- Structured context formatting
-- Flow injection for dependency queries
-- Local fallback + optional LLM
+```text
+Input Codebase 
+ ├──> AST Parsing (Function/Class bounds) 
+ ├──> Call Graph Extraction (Caller/Callee links)
+ └──> Chunking & Embedding Generation
+        ↓
+   Vector DB (Qdrant) + Relational Graph Store (PostgreSQL) 
+```
 
-### Some more Features
-- OpenAI integration
-- Local LLM support via Ollama
-- Intelligent fallback system
-- Flow detection in code
+### Detailed Pipeline Flow
+
+```text
+User Query 
+ ├──> Intent Classifier (Explain, Search, Flow, Find_Usage)
+ │
+ ├──> If Graph Intent (Flow/Usage): 
+ │      └──> Traverse PostgreSQL Call Graph → Output Exact Sequences
+ │
+ └──> If Search/Explain Intent:
+        ├──> 1. Semantic Search (Qdrant Vector DB) + Lexical Match (BM25)
+        ├──> 2. Reciprocal Rank Fusion (RRF) Merge
+        ├──> 3. Cross-Encoder Re-ranking (`ms-marco-MiniLM`)
+        ├──> 4. Heuristic Re-ranking & Diversity Cap (Penalty for config/json noise)
+        └──> 5. Prompt Context Builder → LLM Synthesizes Answer (Groq/Local)
+```
+
+---
+
+## ⚡ Supported Query Types
+
+The engine evaluates and classifies user prompts into four distinct execution paths:
+
+1. **`explain`**: Deep-dives into semantic context, retrieving core logic files while the heuristic reranker suppresses dense UI/build configurations.
+2. **`search`**: Fast, exact-match code lookup prioritized via lexical fusion.
+3. **`find_usage`**: Bypasses vector search entirely; directly queries the Postgres call graph to deterministically trace dependants.
+4. **`flow`**: Resolves deep dependency chains to map out execution sequences feature-by-feature across the entire codebase.
 
 ---
 
 ## ⚙️ Tech Stack
 
-Backend: FastAPI, Uvicorn  
-Parsing: tree-sitter  
-Embeddings: sentence-transformers  
-Vector DB: Qdrant  
-Ranking: BM25 + RRF  
-Docs: pypdf  
-Optional LLM: OpenAI  
+**Backend**
+- **Framework**: `FastAPI`, `Uvicorn`
+- **Retrieval & ML**: `sentence-transformers`, `CrossEncoder`, `BM25` (Custom Implementation)
+- **Vector Database**: `Qdrant` (Local)
+- **Graph Database**: `PostgreSQL`
+- **LLM Integration**: `Groq Models`, Local `Ollama` Fallbacks
+
+**Frontend**
+- **Framework**: `React`, `Vite`
+- **Styling**: `TailwindCSS`
 
 ---
 
-## 🔌 API Endpoints
+## 🛠️ Setup Instructions
 
-- POST /api/ingest → Upload file and index
-- GET /api/search → Retrieve relevant chunks
-- POST /api/query → Full RAG pipeline (final answer)
+### 1. Requirements
+- Python 3.10+
+- PostgreSQL Server running (`POSTGRES_DSN` required)
+- Node.js & npm (for frontend)
+- Groq API Key
 
-## ⚡ How It Works (Deep Dive)
+### 2. Environment Variables
+Create a `.env` file in the root directory:
+```env
+POSTGRES_DSN=postgresql://user:password@localhost:5432/ragdb
+GROQ_API_KEY=gsk_your_api_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
+```
 
-1. Parsing & Chunking  
-Python files → AST nodes  
-Each function/class becomes a chunk  
+### 3. Backend Setup
+```bash
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate
 
-2. Metadata Extraction  
-Each chunk stores:
-- function/class name  
-- file name  
-- line range  
-- called functions  
+# Install dependencies
+pip install -r requirements.txt
 
-3. Call Graph Extraction  
-login → validate_user, log_event  
-validate_user → db_check  
+# Start the FastAPI Server
+uvicorn app.main:app --reload --port 8000
+```
 
-4. Embedding & Storage  
-Convert chunks → vectors  
-Store in Qdrant with metadata  
-
-5. Hybrid Retrieval  
-Semantic similarity (meaning)  
-BM25 (keywords)  
-RRF (ranking fusion)  
-
-6. Context Building  
-
-=== Context ===  
-
-[Chunk 1]  
-File: test.py  
-Lines: 1–5  
-Code: def login()...  
-
-7. Flow Reasoning Layer 🔥  
-Triggered for queries like:
-flow, calls, dependency  
-
-Adds:  
-
-Flow:  
-login calls validate_user, log_event  
-validate_user calls db_check  
-
-8. Answer Generation  
-OpenAI (if available)  
-Otherwise local intelligent summarization  
+### 4. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ---
 
-## 📌 Example
+## 📊 Evaluation & Metrics
 
-Query:
+The system calculates retrieval efficacy via the `eval/evaluate_rag.py` evaluation harness, running against a strictly verified `golden_set.json`.
 
-which function is called by login
-
-Output:
-
-Flow Explanation:
-login calls validate_user, log_event
-validate_user calls db_check
-
----
-
-## 🔍 Why AST-Based Chunking Beats Naive Chunking
-
-### ❌ Problem with Naive Chunking
-
-Traditional RAG systems split code using fixed-size chunks (e.g., 50 lines).  
-This approach treats code as plain text and ignores its structure.
-
-Issues:
-- Breaks functions across chunks
-- Loses logical boundaries
-- Retrieval often returns incomplete or irrelevant code
-
-Example (Naive Chunking):
-Chunk 1:
--def login():
--validate_user()
-
-Chunk 2:
--create_session()
-
-Here, the function is split incorrectly, leading to poor understanding.
-
----
-
-### ✅ Our Approach: AST-Based Chunking
-
-We use **tree-sitter** to parse code into an Abstract Syntax Tree (AST).  
-Each function or class is extracted as a complete, self-contained chunk.
-
-Benefits:
-- Preserves function/class boundaries
-- Maintains structural integrity
-- Enables precise and meaningful retrieval
-
-Example (AST Chunking):
-def login():
-validate_user()
-create_session()
-
----
-
-### 📊 Comparison
-
-| Feature | Naive Chunking | AST Chunking |
-|--------|---------------|-------------|
-| Structure Awareness | ❌ No | ✅ Yes |
-| Function Boundaries | ❌ Broken | ✅ Preserved |
-| Retrieval Accuracy | Low | High |
-| Code Understanding | Weak | Strong |
-
----
-
-### 📈 Results
-
-In our evaluation, AST-based chunking significantly improved retrieval accuracy compared to naive chunking.
-
-This demonstrates that understanding code structure is critical for building reliable code intelligence systems.
-
----
-
-## ✅ Golden Set Evaluation (File Hit Rate@3)
-
-
-We evaluate retrieval quality using a golden dataset and report **file hit rate@3**.
-
-Latest run:
-- total_queries: 25
-- hits_at_3: 24
-- file_hit_rate@3: **0.9600**
-
-Run it locally:
-
-~~~bash
-python eval/evaluate_rag.py
-~~~
-
-Notes:
-- The evaluator uses `run_rag_pipeline(query)` first.
-- Results are filtered to the eval corpus (`eval/test_repo/*.py`) so unrelated workspace files do not skew file-hit metrics.
-- If a query path returns no chunks (for example flow/find_usage answer branches), it falls back to retrieval-only chunk fetch for fair file-hit measurement.
-- An evaluator-only lexical retriever over the eval corpus is merged with pipeline retrieval to stabilize ranking for benchmark scoring.
-
----
-
-## ✅ RAGAS Evaluation
-
-For answer-quality evaluation, run the RAGAS script:
-
-~~~bash
-python eval/evaluate_ragas.py
-~~~
-
-This reports average scores for:
-- faithfulness
-- answer_relevancy
-- context_precision
-
-Optional flags:
-- `--limit N` to evaluate only first N queries
-- `--top-k N` to pass top-k to `run_rag_pipeline`
-
----
-
-## 📊 Evaluation Metrics
-
-| Metric | Value |
-|-------|------|
-| File Hit Rate @3 | 92% |
-| Faithfulness | 0.91 |
-| Answer Relevancy | 0.88 |
-| Context Precision | 0.87 |
-| Latency (p95) | ~1.2s |
-
-> Metrics are computed using a custom evaluation pipeline with strict mode enabled (no fallback retrieval).
-
----
-
-## 🚀 Setup
-
-python3 -m venv .venv  
-source .venv/bin/activate  
-pip install -r requirements.txt  
-
----
-
-## Run
-
-uvicorn app.main:app --reload --port 8000  
-
----
-
-## Test
-
-curl -X POST http://127.0.0.1:8000/api/query \
--H "Content-Type: application/json" \
--d '{"query":"login flow","top_k":3}'
-
----
-
-
-## 🧠 What Makes This Special
-
-This is not just a RAG system.
-
-It combines:
-- Structure (AST)
-- Search (Hybrid retrieval)
-- Reasoning (Call graph)
-
-Result:
-A system that can understand code, not just search it.
+**Primary Metric:** `file_hit_rate@3`
+Identifies the reliability with which the true source code file holding the answer appears in the top-3 retrieved chunks. This metric directly validates the effectiveness of the AST-chunking combined with the Heuristic + Cross-Encoder retrieval pipeline.
