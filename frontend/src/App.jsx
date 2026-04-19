@@ -327,7 +327,7 @@ function App() {
                   </div>
 
                   <p className="text-sm font-semibold text-slate-200">Drag & Drop file</p>
-                  <p className="mt-1.5 text-xs text-slate-400 font-['Space_Grotesk']">Supported: .py, .ts, .go, .js, .txt</p>
+                  <p className="mt-1.5 text-xs text-slate-400 font-['Space_Grotesk']">Supported: .py, .ts, .go, .js</p>
 
                   <div className="relative mt-8 flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-center">
                     <label className="group relative cursor-pointer overflow-hidden rounded-xl border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-slate-200 transition-all hover:bg-white/10 hover:shadow-lg">

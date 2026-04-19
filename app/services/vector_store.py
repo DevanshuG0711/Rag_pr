@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
-from uuid import uuid4
+from uuid import NAMESPACE_URL
+from uuid import uuid5
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance
@@ -69,7 +70,7 @@ def store_chunk_embeddings(
 	point_ids: list[str] = []
 
 	for chunk_index, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-		point_id = str(uuid4())
+		point_id = str(uuid5(NAMESPACE_URL, f"{collection_name}:{file_name}:{chunk_index}"))
 		point_ids.append(point_id)
 
 		payload = {

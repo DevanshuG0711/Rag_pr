@@ -55,10 +55,16 @@ async def ingest_document(
 		lowered = file_name.lower()
 
 		if lowered.endswith(".py"):
-			chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
-				code=text,
-				file_name=file_name,
-			)
+			try:
+				chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+					code=text,
+					file_name=file_name,
+				)
+			except Exception:
+				# Fall back to naive chunking if AST parsing fails.
+				chunks = chunk_text(text=text, chunk_size=chunk_size, overlap=overlap)
+				chunk_metadata = []
+				call_graph = {}
 		elif lowered.endswith((".js", ".ts", ".go")):
 			chunks, chunk_metadata = extract_code_chunks(
 				code=text,
@@ -170,10 +176,16 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 				lowered = file_path.suffix.lower()
 
 				if lowered == ".py":
-					chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
-						code=text,
-						file_name=relative_name,
-					)
+					try:
+						chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+							code=text,
+							file_name=relative_name,
+						)
+					except Exception:
+						# Fall back to naive chunking if AST parsing fails.
+						chunks = chunk_text(text=text, chunk_size=500, overlap=50)
+						chunk_metadata = []
+						call_graph = {}
 				else:
 					chunks, chunk_metadata = extract_code_chunks(
 						code=text,
@@ -253,11 +265,13 @@ def query_rag(payload: QueryRequest) -> QueryResponse:
 		raise HTTPException(status_code=400, detail="query must not be empty")
 
 	try:
+		repo_mode = is_repo_indexed()
+		effective_file_name = None if repo_mode else get_uploaded_file_name()
 		answer, retrieved_chunks = run_rag_pipeline(
 			query=payload.query,
 			top_k=payload.top_k,
-			file_name=get_uploaded_file_name(),
-			repo_indexed=is_repo_indexed(),
+			file_name=effective_file_name,
+			repo_indexed=repo_mode,
 		)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
