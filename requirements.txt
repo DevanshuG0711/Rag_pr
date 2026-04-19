@@ -2,6 +2,7 @@ fastapi==0.115.6
 uvicorn==0.34.0
 python-multipart==0.0.20
 pydantic==2.10.3
+pypdf==5.9.0
 qdrant-client==1.12.1
 openai==1.58.1
 psycopg2-binary==2.9.10
