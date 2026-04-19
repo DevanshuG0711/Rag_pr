@@ -27,9 +27,10 @@ def get_qdrant_client() -> QdrantClient:
 
 	if mode == "memory":
 		_client = QdrantClient(":memory:")
-	elif mode == "docker":
+	elif mode == "docker" or mode == "cloud":
 		url = os.getenv("QDRANT_URL", "http://localhost:6333")
-		_client = QdrantClient(url=url)
+		api_key = os.getenv("QDRANT_API_KEY")
+		_client = QdrantClient(url=url, api_key=api_key)
 	else:
 		QDRANT_LOCAL_PATH.mkdir(parents=True, exist_ok=True)
 		_client = QdrantClient(path=str(QDRANT_LOCAL_PATH))

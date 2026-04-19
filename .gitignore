@@ -16,6 +16,9 @@ data/uploads/
 # OS
 .DS_Store
 
+# Node
+node_modules/
+
 # IDE
 .vscode/
 
