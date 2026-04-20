@@ -71,12 +71,12 @@ function App() {
   const handleFileSelection = (file) => {
     if (!file) return;
 
-    const allowedExtensions = [".py", ".txt", ".go", ".js", ".ts"];
+    const allowedExtensions = [".py", ".go", ".js", ".ts"];
     const lowerName = file.name.toLowerCase();
     const isAllowed = allowedExtensions.some((ext) => lowerName.endsWith(ext));
 
     if (!isAllowed) {
-      setUploadStatus("Please select a .py, .txt, .go, .js, or .ts file.");
+      setUploadStatus("Please select a .py, .go, .js, or .ts file.");
       setSelectedFile(null);
       return;
     }
@@ -333,7 +333,7 @@ function App() {
                       <span className="relative z-10">Browse Files</span>
                       <input
                         type="file"
-                        accept=".py,.txt,.go,.js,.ts"
+                        accept=".py,.go,.js,.ts"
                         onChange={(event) => handleFileSelection(event.target.files?.[0])}
                         className="hidden"
                       />
