@@ -223,7 +223,7 @@ function App() {
             Repo<span className="text-gradient">Lens</span>
           </h1>
           <p className="mt-8 max-w-2xl text-lg leading-relaxed text-slate-400 md:text-xl font-light">
-            Context-aware RAG intelligence engine. Experience incredibly rapid codebase search, explanations, and flow analysis.
+            The RAG engine that actually understands software architecture.
           </p>
         </motion.header>
 
