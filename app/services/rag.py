@@ -169,11 +169,7 @@ def _get_llm_provider() -> str:
 
 
 def _log_generation_route(route_type: str) -> None:
-    provider = _get_llm_provider()
-    print("LLM_PROVIDER:", provider)
-    print("ROUTING:", route_type)
-    print("USING_GROQ:", provider == "groq")
-
+    pass
 
 def _is_noise_file(file_name: str) -> bool:
     lowered = file_name.lower()
@@ -208,9 +204,6 @@ def _apply_heuristic_reranking(chunks: list[dict[str, object]], top_k: int, is_v
         chunk["heuristic_score"] = _adjust_score(original_score, weight)
         filtered_chunks.append(chunk)
 
-    print("IS_VAGUE:", is_vague)
-    print("AFTER_FILTER:", len(filtered_chunks))
-
     filtered_chunks.sort(key=lambda x: float(
         x.get("heuristic_score", -999.0)), reverse=True)
 
@@ -230,7 +223,6 @@ def _apply_heuristic_reranking(chunks: list[dict[str, object]], top_k: int, is_v
         if len(final_chunks) >= top_k:
             break
 
-    print("FINAL_CHUNKS:", len(final_chunks))
     return final_chunks
 
 
@@ -292,7 +284,15 @@ def retrieve_relevant_chunks(
         if _is_whole_file_query(query):
             return fetch_all_chunks_by_file(normalized_file_name)
 
-        query_embedding = generate_embeddings(chunks=[query])[0]
+        try:
+            embeddings = generate_embeddings(chunks=[query])
+            if not embeddings:
+                return []
+            query_embedding = embeddings[0]
+        except Exception as exc:
+            logger.error("Embedding generation failed: %s", exc)
+            return []
+
         return search_similar_chunks_by_file(
             query_embedding=query_embedding,
             file_name=normalized_file_name,
@@ -604,12 +604,7 @@ def generate_flow_explanation(graph_lines: list[str]) -> str:
         f"Edges:\n{flow_text}"
     )
 
-    print("LLM_PROVIDER: groq")
-    print("ROUTING: LLM")
-    print("USING_GROQ:", True)
-
     if not os.getenv("GROQ_API_KEY"):
-        print("GROQ_API_KEY missing → using local")
         return _generate_flow_explanation_rule_based([f"{caller} calls {callee}" for caller, callee in edges])
 
     try:
@@ -619,9 +614,7 @@ def generate_flow_explanation(graph_lines: list[str]) -> str:
         if lines:
             return "\n".join(lines[:5])
     except Exception as exc:
-        logger.error("Groq flow generation failed: %s", exc)
-        print("GROQ_FAILED:", str(exc))
-        print("FALLBACK: LOCAL")
+        logger.warning("Groq flow generation failed: %s, falling back to local rule-based explanation", exc)
 
     return _generate_flow_explanation_rule_based([f"{caller} calls {callee}" for caller, callee in edges])
 
@@ -671,7 +664,6 @@ def _generate_with_groq(query: str, context: str) -> str:
     )
 
     model_name = str(os.getenv("GROQ_MODEL", GROQ_MODEL)).strip() or GROQ_MODEL
-    print("GROQ MODEL:", model_name)
     payload = {
         "model": model_name,
         "messages": [
@@ -779,28 +771,22 @@ def _generate_local_answer(
 
 def generate_answer(query: str, context: str, chunks: list[dict[str, object]]) -> str:
     provider = _get_llm_provider()
-    print("LLM_PROVIDER:", provider)
-    print("CONTEXT_CHARS:", len(context or ""))
-    print("CONTEXT_PREVIEW:", str(context or "")[:160])
-    print("CHUNK_COUNT:", len(chunks or []))
 
     if provider == "openai":
-        print("ROUTING: LLM (OpenAI)")
-        return _generate_with_openai(query=query, context=context)
+        try:
+            return _generate_with_openai(query=query, context=context)
+        except Exception as exc:
+            logger.warning("OpenAI generation failed: %s, falling back to local generation", exc)
+            return _generate_local_answer(query=query, context=context, chunks=chunks)
     elif provider == "groq":
-        print("ROUTING: LLM (Groq)")
-        print("CALLING GROQ...")
         if not os.getenv("GROQ_API_KEY"):
-            print("GROQ_API_KEY missing -> using local")
             return _generate_local_answer(query=query, context=context, chunks=chunks)
         try:
             return _generate_with_groq(query=query, context=context)
         except Exception as exc:
-            print("GROQ ERROR:", str(exc))
-            print("FALLBACK: LOCAL")
+            logger.warning("Groq generation failed: %s, falling back to local generation", exc)
             return _generate_local_answer(query=query, context=context, chunks=chunks)
 
-    print("ROUTING: LOCAL (unsupported provider)")
     return _generate_local_answer(query=query, context=context, chunks=chunks)
 
 
@@ -826,9 +812,6 @@ def run_rag_pipeline(
     effective_mode = "file_only" if mode == "file_only" and str(
         file_name or "").strip() else "global"
     normalized_file_name = str(file_name or "").strip() or None
-
-    print("MODE:", mode)
-    print("QUERY TYPE:", query_type)
 
     if query_type == "find_usage":
         target = _extract_usage_query_target(query)
@@ -928,10 +911,8 @@ def run_rag_pipeline(
         file_name=normalized_file_name,
     )
 
-    print("TOP CHUNKS:")
-    for chunk in retrieved_chunks:
-        print(
-            f"{chunk.get('file_name')} | Score: {chunk.get('score', 'N/A')} | Preview: {str(chunk.get('chunk_text', ''))[:50].replace(chr(10), ' ')}")
+    if not retrieved_chunks:
+        return "No relevant context found in the database. Please try rephrasing your query.", []
 
     context = build_context(retrieved_chunks)
     unique_files = {

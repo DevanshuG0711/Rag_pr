@@ -116,15 +116,18 @@ def search_similar_chunks(
 		raise ValueError("top_k must be greater than 0")
 
 	client = get_qdrant_client()
-	if not client.collection_exists(collection_name=collection_name):
-		raise ValueError("No vectors found yet. Ingest a document first.")
+	try:
+		if not client.collection_exists(collection_name=collection_name):
+			return []
 
-	hits = client.search(
-		collection_name=collection_name,
-		query_vector=query_embedding,
-		limit=top_k,
-		with_payload=True,
-	)
+		hits = client.search(
+			collection_name=collection_name,
+			query_vector=query_embedding,
+			limit=top_k,
+			with_payload=True,
+		)
+	except Exception:
+		return []
 
 	results: list[dict[str, object]] = []
 	for hit in hits:
@@ -360,20 +363,23 @@ def search_similar_chunks_by_file(
 		return []
 
 	client = get_qdrant_client()
-	if not client.collection_exists(collection_name=collection_name):
-		return []
+	try:
+		if not client.collection_exists(collection_name=collection_name):
+			return []
 
-	hits = client.search(
-		collection_name=collection_name,
-		query_vector=query_embedding,
-		query_filter=Filter(
-			must=[
-				FieldCondition(key="file_name", match=MatchValue(value=file_name)),
-			]
-		),
-		limit=top_k,
-		with_payload=True,
-	)
+		hits = client.search(
+			collection_name=collection_name,
+			query_vector=query_embedding,
+			query_filter=Filter(
+				must=[
+					FieldCondition(key="file_name", match=MatchValue(value=file_name)),
+				]
+			),
+			limit=top_k,
+			with_payload=True,
+		)
+	except Exception:
+		return []
 
 	results: list[dict[str, object]] = []
 	for hit in hits:
