@@ -5,7 +5,8 @@ from collections import Counter
 from sentence_transformers import CrossEncoder
 
 from app.services.embeddings import generate_embeddings
-from app.services.vector_store import search_similar_chunks
+from app.services.vector_store import search_similar_chunks, get_qdrant_client
+from qdrant_client.http.models import Filter
 
 RRF_K = 60
 BM25_K1 = 1.5
@@ -100,6 +101,42 @@ def _rerank_with_cross_encoder(query: str, candidates: list[dict[str, object]]) 
     return reranked
 
 
+def _get_all_chunks() -> list[dict[str, object]]:
+    try:
+        client = get_qdrant_client()
+        all_results = []
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name="documents",
+                scroll_filter=Filter(),
+                limit=256,
+                with_payload=True,
+                offset=offset,
+            )
+            if not points:
+                break
+            for point in points:
+                payload = getattr(point, "payload", None) or {}
+                all_results.append({
+                    "id": str(getattr(point, "id", "")),
+                    "file_name": payload.get("file_name"),
+                    "chunk_index": payload.get("chunk_index"),
+                    "chunk_text": payload.get("chunk_text"),
+                    "name": payload.get("name"),
+                    "type": payload.get("type"),
+                    "start_line": payload.get("start_line"),
+                    "end_line": payload.get("end_line"),
+                    "docstring": payload.get("docstring") or "",
+                    "imports": payload.get("imports", []),
+                })
+            if offset is None:
+                break
+        return all_results
+    except Exception:
+        return []
+
+
 def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
     if top_k <= 0:
         raise ValueError("top_k must be greater than 0")
@@ -110,8 +147,10 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
         top_k=top_k * 5,
     )
 
-    if not semantic_results:
-        return []
+    all_chunks = _get_all_chunks()
+    
+    if not all_chunks:
+        return semantic_results[:top_k]
 
     semantic_ranked = sorted(
         semantic_results,
@@ -119,10 +158,10 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
         reverse=True,
     )
 
-    chunk_texts = [str(item.get("chunk_text") or "") for item in semantic_results]
+    chunk_texts = [str(item.get("chunk_text") or "") for item in all_chunks]
     keyword_scores = bm25_scores(query=query, documents=chunk_texts)
 
-    indexed_keyword_results = list(enumerate(semantic_results))
+    indexed_keyword_results = list(enumerate(all_chunks))
 
     keyword_ranked = [
         item
@@ -131,7 +170,7 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
             key=lambda pair: keyword_scores[pair[0]],
             reverse=True,
         )
-    ]
+    ][:top_k * 5]
 
     rrf_totals: dict[str, float] = {}
     representatives: dict[str, dict[str, object]] = {}
