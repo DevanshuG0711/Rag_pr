@@ -846,15 +846,29 @@ def run_rag_pipeline(
             build_graph(graph)
             normalized_query = _normalize_query_for_intent(query)
             if re.search(r"\bwhat does\b", normalized_query):
-                callees = get_callees(target)
-                if not callees:
-                    return f"No callees found for {target}.", []
-                return "\n".join(f"{target} calls {callee}" for callee in callees), []
+                found_callees = []
+                for node, callees in graph.items():
+                    if str(node).split("::")[-1] == target:
+                        for callee in callees:
+                            c_base = str(callee).split("::")[-1]
+                            c_file = str(callee).split("::")[0] if "::" in str(callee) else "unknown"
+                            found_callees.append(f"- {c_file} -> {c_base}()")
+                
+                if found_callees:
+                    return f"The function {target} calls:\n" + "\n".join(list(dict.fromkeys(found_callees))), []
+                return "No usage found in the indexed repository", []
 
-            callers = get_callers(target)
-            if not callers:
-                return f"No callers found for {target}.", []
-            return "\n".join(f"{caller} calls {target}" for caller in callers), []
+            found_callers = []
+            for node, callees in graph.items():
+                n_base = str(node).split("::")[-1]
+                n_file = str(node).split("::")[0] if "::" in str(node) else "unknown"
+                for callee in callees:
+                    if str(callee).split("::")[-1] == target:
+                        found_callers.append(f"- {n_file} -> {n_base}()")
+            
+            if found_callers:
+                return f"The function {target} is used in:\n" + "\n".join(list(dict.fromkeys(found_callers))), []
+            return "No usage found in the indexed repository", []
 
     if query_type == "flow":
         if effective_mode == "file_only" and normalized_file_name:
@@ -876,7 +890,9 @@ def run_rag_pipeline(
                 seeds if seeds else list(graph.keys()), max_depth=2)
             expanded_set = set(expanded)
 
-            lines: list[str] = []
+            steps = []
+            step_count = 1
+            seen_edges = set()
             for caller, callees in graph.items():
                 caller_base = str(caller).split("::", 1)[-1]
                 if caller_base not in expanded_set:
@@ -884,13 +900,19 @@ def run_rag_pipeline(
                 for callee in callees:
                     callee_base = str(callee).split("::", 1)[-1]
                     if callee_base in expanded_set:
-                        lines.append(f"{caller_base} calls {callee_base}")
+                        edge = (caller_base, callee_base)
+                        if edge not in seen_edges:
+                            seen_edges.add(edge)
+                            if step_count == 1:
+                                steps.append(f"Step {step_count}: {caller_base}() is called")
+                                step_count += 1
+                            steps.append(f"Step {step_count}: {caller_base}() calls {callee_base}()")
+                            step_count += 1
 
-            if not lines:
-                return "No call relationships found.", []
+            if not steps:
+                return "No usage found in the indexed repository", []
 
-            _log_generation_route("LLM_FLOW_GRAPH")
-            return generate_flow_explanation(lines), []
+            return "Execution Flow:\n\n" + "\n".join(steps), []
 
     retrieved_chunks = retrieve_relevant_chunks(
         query=query,
