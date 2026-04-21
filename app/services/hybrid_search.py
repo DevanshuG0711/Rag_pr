@@ -141,10 +141,15 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
     if top_k <= 0:
         raise ValueError("top_k must be greater than 0")
 
-    query_embedding = generate_embeddings(chunks=[query])[0]
+    # Fix 4: Add safety check for empty embeddings
+    embeddings = generate_embeddings(chunks=[query])
+    if not embeddings:
+        return []
+    query_embedding = embeddings[0]
+
     semantic_results = search_similar_chunks(
         query_embedding=query_embedding,
-        top_k=top_k * 5,
+        top_k=top_k * 3,  # Fix 3: Reduce fetch size to top_k * 3
     )
 
     all_chunks = _get_all_chunks()
@@ -152,14 +157,37 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
     if not all_chunks:
         return semantic_results[:top_k]
 
+    # Fix 1: Normalize semantic results
+    normalized_semantic = []
+    for item in semantic_results:
+        normalized_semantic.append({
+            "id": str(item.get("id", "")),
+            "file_name": item.get("file_name"),
+            "chunk_index": item.get("chunk_index"),
+            "chunk_text": item.get("chunk_text"),
+            "name": item.get("name"),
+            "type": item.get("type"),
+            "start_line": item.get("start_line"),
+            "end_line": item.get("end_line"),
+            "docstring": item.get("docstring") or "",
+            "imports": item.get("imports", []),
+            "score": float(item.get("score", 0.0)),
+        })
+
     semantic_ranked = sorted(
-        semantic_results,
+        normalized_semantic,
         key=lambda item: float(item.get("score", 0.0)),
         reverse=True,
     )
 
     chunk_texts = [str(item.get("chunk_text") or "") for item in all_chunks]
     keyword_scores = bm25_scores(query=query, documents=chunk_texts)
+    
+    # Fix 2: Normalize BM25 scores to [0,1]
+    max_score = max(keyword_scores) if keyword_scores else 1.0
+    if max_score == 0.0:
+        max_score = 1.0
+    keyword_scores = [score / max_score for score in keyword_scores]
 
     indexed_keyword_results = list(enumerate(all_chunks))
 
@@ -170,7 +198,7 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
             key=lambda pair: keyword_scores[pair[0]],
             reverse=True,
         )
-    ][:top_k * 5]
+    ][:top_k * 3]  # Fix 3: Reduce fetch size to top_k * 3
 
     rrf_totals: dict[str, float] = {}
     representatives: dict[str, dict[str, object]] = {}

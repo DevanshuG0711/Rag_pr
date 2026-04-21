@@ -49,18 +49,18 @@ def _normalize_query_typos(query: str) -> str:
 def classify_query_rule_based(query: str) -> str:
     normalized = _normalize_query_typos(query)
 
-    # Priority 1: find_usage
-    if re.search(r"\b(who\s+calls|which\s+function\s+calls)\b", normalized):
+    # Priority 1: flow
+    if re.search(r"\b(flow|dependency|execution|how\s+does\s+\w+\s+work|what\s+happens\s+during)\b", normalized):
+        return "flow"
+
+    # Priority 2: find_usage
+    if re.search(r"\b(who\s+calls|which\s+function\s+calls|where\s+is\s+\w+\s+used|called\s+by\s+\w+|usage\s+of\s+\w+)\b", normalized):
         return "find_usage"
     if re.search(r"\bcall(?:s|ed|ing)?\b", normalized):
         return "find_usage"
 
-    # Priority 2: flow
-    if re.search(r"\b(flow|dependency)\b", normalized):
-        return "flow"
-
     # Priority 3: explain
-    if re.search(r"\b(what|explain|describe)\b", normalized):
+    if re.search(r"\b(what|explain|describe|what\s+does\s+\w+\s+do)\b", normalized):
         return "explain"
 
     # Priority 4: default
