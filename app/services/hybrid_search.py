@@ -156,13 +156,14 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
 
     semantic_results = search_similar_chunks(
         query_embedding=query_embedding,
-        top_k=top_k * 3,  # Fix 3: Reduce fetch size to top_k * 3
+        top_k=top_k * 3,
     )
 
-    all_chunks = _get_all_chunks()
-    
-    if not all_chunks:
-        return semantic_results[:top_k]
+    if not semantic_results:
+        return []
+
+    # BM25 should only run on candidates from semantic search
+    all_chunks = semantic_results
 
     # Fix 1: Normalize semantic results
     normalized_semantic = []

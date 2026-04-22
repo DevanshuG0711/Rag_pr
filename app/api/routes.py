@@ -360,26 +360,9 @@ def query_rag(payload: QueryRequest) -> QueryResponse:
 		repo_mode = is_repo_indexed()
 		effective_file_name = None if repo_mode else get_uploaded_file_name()
 
-		if target_file and (_repo_partially_indexed or not repo_mode) and _last_indexed_repo_url:
-			with tempfile.TemporaryDirectory(prefix="repo_query_index_") as tmp_dir:
-				repo_dir = Path(tmp_dir) / "repo"
-				clone_result = subprocess.run(
-					["git", "clone", "--depth", "1", _last_indexed_repo_url, str(repo_dir)],
-					capture_output=True,
-					text=True,
-					check=False,
-				)
-				if clone_result.returncode == 0:
-					matched_path = _find_target_file(repo_dir=repo_dir, target_file=target_file)
-					if not matched_path:
-						return QueryResponse(
-							query=payload.query,
-							answer="File not found in repository",
-							retrieved_chunks=[],
-						)
-					_index_repo_file(repo_dir=repo_dir, file_path=matched_path)
-					effective_file_name = str(matched_path.relative_to(repo_dir))
-					repo_mode = False
+		if target_file:
+			effective_file_name = target_file
+			repo_mode = False
 
 		answer, retrieved_chunks = run_rag_pipeline(
 			query=payload.query,
@@ -387,6 +370,13 @@ def query_rag(payload: QueryRequest) -> QueryResponse:
 			file_name=effective_file_name,
 			repo_indexed=repo_mode,
 		)
+
+		if target_file and not retrieved_chunks:
+			return QueryResponse(
+				query=payload.query,
+				answer="File not found in repository",
+				retrieved_chunks=[],
+			)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:

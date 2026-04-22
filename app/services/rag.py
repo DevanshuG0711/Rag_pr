@@ -252,45 +252,7 @@ def retrieve_relevant_chunks(
         r'\b[a-zA-Z0-9_\-]+\.(?:py|js|ts|tsx|jsx|go|md|json)\b', query)
     if detected_files and mode != "file_only" and not file_name:
         mode = "file_only"
-        
-        # Files in Qdrant may have paths prepended like "app/services/rag.py"
-        # but the user might query just "rag.py". We need to handle this lookup
         file_name = detected_files[0]
-        query_file_base = file_name.split("/")[-1].lower()
-
-        # Attempt to exactly match a path if Qdrant has nested paths
-        from app.services.vector_store import get_qdrant_client
-        from qdrant_client.http.models import Filter
-        try:
-            client = get_qdrant_client()
-            existing_files: set[str] = set()
-            offset = None
-
-            while True:
-                points, offset = client.scroll(
-                    collection_name="documents",
-                    scroll_filter=Filter(),
-                    limit=256,
-                    with_payload=True,
-                    offset=offset,
-                )
-                if not points:
-                    break
-
-                for point in points:
-                    payload = getattr(point, "payload", None) or {}
-                    existing_files.add(str(payload.get("file_name", "")))
-
-                if offset is None:
-                    break
-
-            for ef in existing_files:
-                ef_lower = ef.lower()
-                if ef_lower == query_file_base or ef_lower.endswith("/" + query_file_base):
-                    file_name = ef
-                    break
-        except Exception:
-            pass
 
     if mode == "file_only":
         normalized_file_name = str(file_name or "").strip()
