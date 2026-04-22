@@ -14,6 +14,7 @@ BM25_B = 0.75
 CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 MAX_RERANK_CANDIDATES = 20
 MIN_RERANK_CANDIDATES = 10
+MAX_TOTAL_CHUNKS = 500
 
 _cross_encoder_model: CrossEncoder | None = None
 
@@ -107,6 +108,8 @@ def _get_all_chunks() -> list[dict[str, object]]:
         all_results = []
         offset = None
         while True:
+            if len(all_results) >= MAX_TOTAL_CHUNKS:
+                break
             points, offset = client.scroll(
                 collection_name="documents",
                 scroll_filter=Filter(),
@@ -117,6 +120,8 @@ def _get_all_chunks() -> list[dict[str, object]]:
             if not points:
                 break
             for point in points:
+                if len(all_results) >= MAX_TOTAL_CHUNKS:
+                    break
                 payload = getattr(point, "payload", None) or {}
                 all_results.append({
                     "id": str(getattr(point, "id", "")),
@@ -130,8 +135,10 @@ def _get_all_chunks() -> list[dict[str, object]]:
                     "docstring": payload.get("docstring") or "",
                     "imports": payload.get("imports", []),
                 })
-            if offset is None:
+            if offset is None or len(points) == 0:
                 break
+        if not all_results:
+            return []
         return all_results
     except Exception:
         return []
