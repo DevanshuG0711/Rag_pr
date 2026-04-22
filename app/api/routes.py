@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 import subprocess
 import tempfile
@@ -30,7 +31,12 @@ from app.services.vector_store import store_chunk_embeddings
 router = APIRouter(prefix="/api")
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-SUPPORTED_REPO_EXTENSIONS = {".py", ".js", ".ts", ".go"}
+SUPPORTED_REPO_EXTENSIONS = {".py", ".js", ".ts", ".jsx", ".tsx", ".go"}
+SKIPPED_REPO_DIRECTORIES = {".git", "node_modules", "pycache", "__pycache__", "dist", "build", ".next", ".venv"}
+MAX_FILES = 20
+MAX_FILE_CHARACTERS = 20000
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/ingest")
@@ -151,11 +157,27 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 					detail=f"Failed to clone repository: {error_text or 'git clone failed'}",
 				)
 
-			source_files = [
-				path
-				for path in repo_dir.rglob("*")
-				if path.is_file() and path.suffix.lower() in SUPPORTED_REPO_EXTENSIONS
-			]
+			source_files: list[Path] = []
+			partial_indexing_applied = False
+
+			for path in repo_dir.rglob("*"):
+				if any(part in SKIPPED_REPO_DIRECTORIES for part in path.parts):
+					continue
+				if not path.is_file():
+					continue
+
+				if path.suffix.lower() not in SUPPORTED_REPO_EXTENSIONS:
+					logger.info("Skipping unsupported file: %s", str(path.relative_to(repo_dir)))
+					continue
+
+				source_files.append(path)
+				if len(source_files) > MAX_FILES:
+					partial_indexing_applied = True
+					source_files = source_files[:MAX_FILES]
+					break
+
+			if partial_indexing_applied:
+				logger.info("Large repo detected, partial indexing applied")
 
 			for file_path in source_files:
 				try:
@@ -165,6 +187,10 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 						text = file_bytes.decode("utf-8")
 					except UnicodeDecodeError:
 						text = file_bytes.decode("latin-1")
+
+					if len(text) > MAX_FILE_CHARACTERS:
+						logger.info("Skipping large file: %s", relative_name)
+						continue
 
 					chunk_metadata: list[dict[str, object]] = []
 					call_graph: dict[str, list[str]] = {}
