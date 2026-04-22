@@ -19,6 +19,7 @@ from app.services.ingest import extract_python_chunks_and_graph
 from app.services.call_graph_store import upsert_call_graph
 from app.models.schemas import QueryRequest
 from app.models.schemas import QueryResponse
+from app.services.rag import detect_query_target_file
 from app.services.rag import run_rag_pipeline
 from app.services.context_state import get_uploaded_file_name
 from app.services.context_state import is_repo_indexed
@@ -37,6 +38,85 @@ MAX_FILES = 20
 MAX_FILE_CHARACTERS = 20000
 
 logger = logging.getLogger(__name__)
+_last_indexed_repo_url: str | None = None
+_repo_partially_indexed: bool = False
+
+
+def _find_target_file(repo_dir: Path, target_file: str) -> Path | None:
+	normalized_target = str(target_file or "").strip().lower()
+	if not normalized_target:
+		return None
+
+	for path in repo_dir.rglob("*"):
+		if any(part in SKIPPED_REPO_DIRECTORIES for part in path.parts):
+			continue
+		if not path.is_file():
+			continue
+		if path.suffix.lower() not in SUPPORTED_REPO_EXTENSIONS:
+			continue
+
+		relative_name = str(path.relative_to(repo_dir)).lower()
+		base_name = path.name.lower()
+		if normalized_target == relative_name or normalized_target == base_name or relative_name.endswith("/" + normalized_target):
+			return path
+
+	return None
+
+
+def _index_repo_file(repo_dir: Path, file_path: Path) -> bool:
+	try:
+		relative_name = str(file_path.relative_to(repo_dir))
+		file_bytes = file_path.read_bytes()
+		try:
+			text = file_bytes.decode("utf-8")
+		except UnicodeDecodeError:
+			text = file_bytes.decode("latin-1")
+
+		if len(text) > MAX_FILE_CHARACTERS:
+			logger.info("Skipping large file: %s", relative_name)
+			return False
+
+		chunk_metadata: list[dict[str, object]] = []
+		call_graph: dict[str, list[str]] = {}
+		lowered = file_path.suffix.lower()
+
+		if lowered == ".py":
+			try:
+				chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+					code=text,
+					file_name=relative_name,
+				)
+			except Exception:
+				chunks = chunk_text(text=text, chunk_size=500, overlap=50)
+				chunk_metadata = []
+				call_graph = {}
+		else:
+			chunks, chunk_metadata = extract_code_chunks(
+				code=text,
+				file_name=relative_name,
+			)
+			if not chunks:
+				chunks = chunk_text(text=text, chunk_size=500, overlap=50)
+
+		if not chunks:
+			return False
+
+		embeddings = generate_embeddings(chunks=chunks)
+		if not embeddings:
+			return False
+
+		if call_graph:
+			upsert_call_graph(file_name=relative_name, call_graph=call_graph)
+
+		store_chunk_embeddings(
+			file_name=relative_name,
+			chunks=chunks,
+			embeddings=embeddings,
+			chunk_metadata=chunk_metadata if chunk_metadata else None,
+		)
+		return True
+	except Exception:
+		return False
 
 
 @router.post("/ingest")
@@ -134,6 +214,7 @@ async def ingest_document(
 
 @router.post("/index_repo")
 def index_repository(payload: dict[str, str]) -> dict[str, str]:
+	global _last_indexed_repo_url, _repo_partially_indexed
 	repo_url = str(payload.get("repo_url") or "").strip()
 	if not repo_url:
 		raise HTTPException(status_code=400, detail="repo_url must not be empty")
@@ -238,6 +319,9 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail="Repository indexing failed") from exc
 
+	_last_indexed_repo_url = repo_url
+	_repo_partially_indexed = partial_indexing_applied
+
 	set_repo_indexed(True)
 	return {"message": "Repository indexed successfully"}
 
@@ -272,8 +356,31 @@ def query_rag(payload: QueryRequest) -> QueryResponse:
 		raise HTTPException(status_code=400, detail="query must not be empty")
 
 	try:
+		target_file = detect_query_target_file(payload.query)
 		repo_mode = is_repo_indexed()
 		effective_file_name = None if repo_mode else get_uploaded_file_name()
+
+		if target_file and (_repo_partially_indexed or not repo_mode) and _last_indexed_repo_url:
+			with tempfile.TemporaryDirectory(prefix="repo_query_index_") as tmp_dir:
+				repo_dir = Path(tmp_dir) / "repo"
+				clone_result = subprocess.run(
+					["git", "clone", "--depth", "1", _last_indexed_repo_url, str(repo_dir)],
+					capture_output=True,
+					text=True,
+					check=False,
+				)
+				if clone_result.returncode == 0:
+					matched_path = _find_target_file(repo_dir=repo_dir, target_file=target_file)
+					if not matched_path:
+						return QueryResponse(
+							query=payload.query,
+							answer="File not found in repository",
+							retrieved_chunks=[],
+						)
+					_index_repo_file(repo_dir=repo_dir, file_path=matched_path)
+					effective_file_name = str(matched_path.relative_to(repo_dir))
+					repo_mode = False
+
 		answer, retrieved_chunks = run_rag_pipeline(
 			query=payload.query,
 			top_k=payload.top_k,

@@ -47,6 +47,22 @@ QUERY_TYPO_FIXES = {
 }
 
 
+def detect_query_target_file(query: str) -> str | None:
+    normalized = str(query or "").strip()
+    if not normalized:
+        return None
+
+    direct_match = re.search(r"\b([a-zA-Z0-9_./\-]+\.(?:py|js|ts|go))\b", normalized, flags=re.IGNORECASE)
+    if direct_match:
+        return direct_match.group(1)
+
+    explain_match = re.search(r"\bexplain\s+([a-zA-Z0-9_./\-]+\.(?:py|js|ts|go))\s+file\b", normalized, flags=re.IGNORECASE)
+    if explain_match:
+        return explain_match.group(1)
+
+    return None
+
+
 def _normalize_query_for_intent(query: str) -> str:
     normalized = query.lower()
 
