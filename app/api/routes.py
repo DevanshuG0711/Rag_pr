@@ -158,74 +158,55 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 			]
 
 			for file_path in source_files:
-				relative_name = str(file_path.relative_to(repo_dir))
 				try:
+					relative_name = str(file_path.relative_to(repo_dir))
 					file_bytes = file_path.read_bytes()
 					try:
 						text = file_bytes.decode("utf-8")
 					except UnicodeDecodeError:
 						text = file_bytes.decode("latin-1")
-				except Exception as exc:
-					raise HTTPException(
-						status_code=500,
-						detail=f"Failed to read file during indexing: {relative_name}",
-					) from exc
 
-				chunk_metadata: list[dict[str, object]] = []
-				call_graph: dict[str, list[str]] = {}
-				lowered = file_path.suffix.lower()
+					chunk_metadata: list[dict[str, object]] = []
+					call_graph: dict[str, list[str]] = {}
+					lowered = file_path.suffix.lower()
 
-				if lowered == ".py":
-					try:
-						chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+					if lowered == ".py":
+						try:
+							chunks, chunk_metadata, call_graph = extract_python_chunks_and_graph(
+								code=text,
+								file_name=relative_name,
+							)
+						except Exception:
+							# Fall back to naive chunking if AST parsing fails.
+							chunks = chunk_text(text=text, chunk_size=500, overlap=50)
+							chunk_metadata = []
+							call_graph = {}
+					else:
+						chunks, chunk_metadata = extract_code_chunks(
 							code=text,
 							file_name=relative_name,
 						)
-					except Exception:
-						# Fall back to naive chunking if AST parsing fails.
-						chunks = chunk_text(text=text, chunk_size=500, overlap=50)
-						chunk_metadata = []
-						call_graph = {}
-				else:
-					chunks, chunk_metadata = extract_code_chunks(
-						code=text,
-						file_name=relative_name,
-					)
+						if not chunks:
+							chunks = chunk_text(text=text, chunk_size=500, overlap=50)
+
 					if not chunks:
-						chunks = chunk_text(text=text, chunk_size=500, overlap=50)
+						continue
 
-				if not chunks:
-					continue
-
-				try:
 					embeddings = generate_embeddings(chunks=chunks)
-				except Exception as exc:
-					raise HTTPException(
-						status_code=500,
-						detail=f"Failed to generate embeddings for {relative_name}",
-					) from exc
+					if not embeddings:
+						continue
 
-				if call_graph:
-					try:
+					if call_graph:
 						upsert_call_graph(file_name=relative_name, call_graph=call_graph)
-					except Exception as exc:
-						raise HTTPException(
-							status_code=500,
-							detail=f"Failed to store call graph for {relative_name}",
-						) from exc
 
-				try:
 					store_chunk_embeddings(
 						file_name=relative_name,
 						chunks=chunks,
 						embeddings=embeddings,
 						chunk_metadata=chunk_metadata if chunk_metadata else None,
 					)
-				except Exception as exc:
-					raise HTTPException(
-						status_code=500,
-						detail=f"Failed to store vectors for {relative_name}",
-					) from exc
+				except Exception:
+					continue
 	except HTTPException:
 		raise
 	except Exception as exc:

@@ -317,7 +317,7 @@ def fetch_all_chunks_by_file(
 			break
 
 		all_points.extend(points)
-		if offset is None:
+		if offset is None or len(points) == 0:
 			break
 
 	results: list[dict[str, object]] = []
