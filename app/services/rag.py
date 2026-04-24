@@ -14,6 +14,7 @@ from app.services.call_graph_query import build_graph
 import certifi
 import ssl
 import os
+import psutil
 import re
 import json
 import logging
@@ -45,6 +46,12 @@ QUERY_TYPO_FIXES = {
     "cals": "calls",
     "clls": "calls",
 }
+
+
+def log_memory(stage: str):
+    process = psutil.Process(os.getpid())
+    mem = process.memory_info().rss / (1024 * 1024)
+    print(f"[MEMORY] {stage}: {mem:.2f} MB")
 
 
 def detect_query_target_file(query: str) -> str | None:
@@ -875,6 +882,7 @@ def run_rag_pipeline(
 
             return "Execution Flow:\n\n" + "\n".join(steps), []
 
+    log_memory("rag:before_retrieval")
     retrieved_chunks = retrieve_relevant_chunks(
         query=query,
         top_k=top_k,
@@ -888,6 +896,7 @@ def run_rag_pipeline(
         mode=effective_mode,
         file_name=normalized_file_name,
     )
+    log_memory("rag:after_retrieval")
 
     if not retrieved_chunks:
         return "No relevant context found in the database. Please try rephrasing your query.", []
@@ -906,6 +915,7 @@ def run_rag_pipeline(
 
     if force_llm:
         _log_generation_route("LLM")
+        log_memory("rag:before_llm_call")
         answer = generate_answer(
             query=query, context=context, chunks=retrieved_chunks)
         return answer, retrieved_chunks
@@ -918,6 +928,7 @@ def run_rag_pipeline(
 
     # explain
     _log_generation_route("LLM")
+    log_memory("rag:before_llm_call")
     answer = generate_answer(
         query=query, context=context, chunks=retrieved_chunks)
     return answer, retrieved_chunks

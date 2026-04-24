@@ -1,7 +1,10 @@
 import logging
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+
+import psutil
 
 from fastapi import APIRouter
 from fastapi import File
@@ -40,6 +43,12 @@ MAX_FILE_CHARACTERS = 20000
 logger = logging.getLogger(__name__)
 _last_indexed_repo_url: str | None = None
 _repo_partially_indexed: bool = False
+
+
+def log_memory(stage: str):
+	process = psutil.Process(os.getpid())
+	mem = process.memory_info().rss / (1024 * 1024)
+	print(f"[MEMORY] {stage}: {mem:.2f} MB")
 
 
 def _find_target_file(repo_dir: Path, target_file: str) -> Path | None:
@@ -222,6 +231,7 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 		raise HTTPException(status_code=400, detail="Invalid repository URL")
 
 	try:
+		log_memory("routes:index_repo:before_repo_indexing")
 		with tempfile.TemporaryDirectory(prefix="repo_index_") as tmp_dir:
 			repo_dir = Path(tmp_dir) / "repo"
 			clone_result = subprocess.run(
@@ -319,6 +329,8 @@ def index_repository(payload: dict[str, str]) -> dict[str, str]:
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail="Repository indexing failed") from exc
 
+	log_memory("routes:index_repo:after_repo_indexing")
+
 	_last_indexed_repo_url = repo_url
 	_repo_partially_indexed = partial_indexing_applied
 
@@ -363,6 +375,8 @@ def query_rag(payload: QueryRequest) -> QueryResponse:
 		if target_file:
 			effective_file_name = target_file
 			repo_mode = False
+
+		log_memory("routes:query:before_query_processing")
 
 		answer, retrieved_chunks = run_rag_pipeline(
 			query=payload.query,

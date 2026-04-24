@@ -1,7 +1,9 @@
 import math
+import os
 import re
 from collections import Counter
 
+import psutil
 from sentence_transformers import CrossEncoder
 
 from app.services.embeddings import generate_embeddings
@@ -17,6 +19,12 @@ MIN_RERANK_CANDIDATES = 10
 MAX_TOTAL_CHUNKS = 500
 
 _cross_encoder_model: CrossEncoder | None = None
+
+
+def log_memory(stage: str):
+    process = psutil.Process(os.getpid())
+    mem = process.memory_info().rss / (1024 * 1024)
+    print(f"[MEMORY] {stage}: {mem:.2f} MB")
 
 
 def _tokenize(text: str) -> list[str]:
@@ -154,10 +162,12 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
         return []
     query_embedding = embeddings[0]
 
+    log_memory("hybrid_search:before_semantic_search")
     semantic_results = search_similar_chunks(
         query_embedding=query_embedding,
         top_k=top_k * 3,
     )
+    log_memory("hybrid_search:after_semantic_search")
 
     if not semantic_results:
         return []
@@ -189,7 +199,9 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
     )
 
     chunk_texts = [str(item.get("chunk_text") or "") for item in all_chunks]
+    log_memory("hybrid_search:before_bm25")
     keyword_scores = bm25_scores(query=query, documents=chunk_texts)
+    log_memory("hybrid_search:after_bm25")
     
     # Fix 2: Normalize BM25 scores to [0,1]
     max_score = max(keyword_scores) if keyword_scores else 1.0
