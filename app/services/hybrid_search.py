@@ -4,7 +4,6 @@ import re
 from collections import Counter
 
 import psutil
-from sentence_transformers import CrossEncoder
 
 from app.services.embeddings import generate_embeddings
 from app.services.vector_store import search_similar_chunks, get_qdrant_client
@@ -13,12 +12,9 @@ from qdrant_client.http.models import Filter
 RRF_K = 60
 BM25_K1 = 1.5
 BM25_B = 0.75
-CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 MAX_RERANK_CANDIDATES = 20
 MIN_RERANK_CANDIDATES = 10
 MAX_TOTAL_CHUNKS = 500
-
-_cross_encoder_model: CrossEncoder | None = None
 
 
 def log_memory(stage: str):
@@ -81,33 +77,6 @@ def _result_key(result: dict[str, object]) -> str:
 
 def _rrf_score(rank: int, k: int = RRF_K) -> float:
     return 1.0 / (k + rank)
-
-
-def _get_cross_encoder_model() -> CrossEncoder:
-    global _cross_encoder_model
-
-    if _cross_encoder_model is None:
-        _cross_encoder_model = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
-
-    return _cross_encoder_model
-
-
-def _rerank_with_cross_encoder(query: str, candidates: list[dict[str, object]]) -> list[dict[str, object]]:
-    if not candidates:
-        return []
-
-    model = _get_cross_encoder_model()
-    pairs = [(query, str(item.get("chunk_text") or "")) for item in candidates]
-    scores = model.predict(pairs)
-
-    reranked: list[dict[str, object]] = []
-    for item, score in zip(candidates, scores):
-        updated = dict(item)
-        updated["score"] = float(score)
-        reranked.append(updated)
-
-    reranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
-    return reranked
 
 
 def _get_all_chunks() -> list[dict[str, object]]:
@@ -260,9 +229,6 @@ def hybrid_search(query: str, top_k: int) -> list[dict[str, object]]:
     rerank_pool_size = min(max(top_k * 4, MIN_RERANK_CANDIDATES), MAX_RERANK_CANDIDATES)
     rerank_candidates = unique_results[:rerank_pool_size]
 
-    try:
-        reranked_results = _rerank_with_cross_encoder(query=query, candidates=rerank_candidates)
-    except Exception:
-        reranked_results = rerank_candidates
+    reranked_results = rerank_candidates
 
     return reranked_results[:top_k]
