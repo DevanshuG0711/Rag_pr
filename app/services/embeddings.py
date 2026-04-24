@@ -1,10 +1,10 @@
 import os
 
-import google.generativeai as genai
+from google import genai
 
-DEFAULT_EMBEDDING_MODEL = "models/embedding-001"
+DEFAULT_EMBEDDING_MODEL = "text-embedding-004"
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def get_embedding_model(model_name: str = DEFAULT_EMBEDDING_MODEL) -> str:
@@ -18,11 +18,11 @@ def generate_embeddings(chunks: list[str], model_name: str = DEFAULT_EMBEDDING_M
 	embeddings: list[list[float]] = []
 	for chunk in chunks:
 		try:
-			response = genai.embed_content(
+			response = client.models.embed_content(
 				model=model_name,
-				content=chunk,
+				contents=chunk,
 			)
-			embeddings.append(list(response.get("embedding", [])))
+			embeddings.append(list(response.embeddings[0].values))
 		except Exception:
 			embeddings.append([])
 
@@ -31,8 +31,8 @@ def generate_embeddings(chunks: list[str], model_name: str = DEFAULT_EMBEDDING_M
 
 def embedding_dimension(model_name: str = DEFAULT_EMBEDDING_MODEL) -> int:
 	try:
-		response = genai.embed_content(model=model_name, content="dimension probe")
-		embedding = list(response.get("embedding", []))
+		response = client.models.embed_content(model=model_name, contents="dimension probe")
+		embedding = list(response.embeddings[0].values)
 		return len(embedding)
 	except Exception:
 		return 0

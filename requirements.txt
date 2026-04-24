@@ -9,7 +9,7 @@ psycopg2-binary==2.9.10
 python-dotenv==1.0.1
 certifi==2024.12.14
 networkx==3.4.2
-google-generativeai
+google-genai
 tree-sitter==0.23.2
 tree-sitter-python==0.23.6
 tree-sitter-javascript==0.23.1
