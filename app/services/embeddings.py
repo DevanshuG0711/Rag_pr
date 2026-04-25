@@ -4,7 +4,17 @@ from google import genai
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-004"
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = None
+
+
+def get_client():
+	global client
+	if client is None:
+		api_key = os.getenv("GEMINI_API_KEY")
+		if not api_key:
+			raise ValueError("GEMINI_API_KEY not set")
+		client = genai.Client(api_key=api_key)
+	return client
 
 
 def get_embedding_model(model_name: str = DEFAULT_EMBEDDING_MODEL) -> str:
@@ -18,7 +28,8 @@ def generate_embeddings(chunks: list[str], model_name: str = DEFAULT_EMBEDDING_M
 	embeddings: list[list[float]] = []
 	for chunk in chunks:
 		try:
-			response = client.models.embed_content(
+			gemini_client = get_client()
+			response = gemini_client.models.embed_content(
 				model=model_name,
 				contents=chunk,
 			)
@@ -31,7 +42,8 @@ def generate_embeddings(chunks: list[str], model_name: str = DEFAULT_EMBEDDING_M
 
 def embedding_dimension(model_name: str = DEFAULT_EMBEDDING_MODEL) -> int:
 	try:
-		response = client.models.embed_content(model=model_name, contents="dimension probe")
+		gemini_client = get_client()
+		response = gemini_client.models.embed_content(model=model_name, contents="dimension probe")
 		embedding = list(response.embeddings[0].values)
 		return len(embedding)
 	except Exception:

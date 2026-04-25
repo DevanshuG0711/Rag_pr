@@ -82,3 +82,5 @@ jobs:
 
       - name: Run evaluation
         run: python eval/evaluate_rag.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
