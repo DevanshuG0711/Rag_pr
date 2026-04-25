@@ -323,6 +323,23 @@ def _merge_dedup_chunks(original: list[dict[str, object]], extra: list[dict[str,
     return merged
 
 
+def _file_name_matches_target(target_file: str, chunk_file_name: str | None) -> bool:
+    if not chunk_file_name:
+        return False
+
+    target_file = str(target_file or "").lower().strip()
+    chunk_file = str(chunk_file_name or "").lower().strip()
+    if not target_file or not chunk_file:
+        return False
+
+    target_base = os.path.basename(target_file).lower().strip()
+    chunk_base = os.path.basename(chunk_file).lower().strip()
+    if chunk_base == target_base:
+        return True
+
+    return chunk_file.endswith(target_file)
+
+
 def _expand_chunks_with_call_graph(
         query: str,
         retrieved_chunks: list[dict[str, object]],
@@ -424,7 +441,10 @@ def _expand_chunks_with_call_graph(
             expanded_chunks = [
                 chunk
                 for chunk in expanded_chunks
-                if str(chunk.get("file_name") or "").strip() == normalized_file_name
+                if _file_name_matches_target(
+                    target_file=normalized_file_name,
+                    chunk_file_name=chunk.get("file_name"),
+                )
             ]
 
     return _merge_dedup_chunks(retrieved_chunks, expanded_chunks)
